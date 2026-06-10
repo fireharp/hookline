@@ -1,3 +1,7 @@
 LOCAL.md
 .agents/tasks/init.md
 .env
+.coherence/
+bin/
+.DS_Store
+repomix*.*

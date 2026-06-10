@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "timeout": 30,
+            "statusMessage": "Hookline policy check"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "timeout": 30,
+            "statusMessage": "Hookline post-tool review"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "timeout": 30,
+            "statusMessage": "Hookline prompt review"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "timeout": 30,
+            "statusMessage": "Hookline stop review"
+          }
+        ]
+      }
+    ]
+  }
+}

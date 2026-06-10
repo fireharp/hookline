@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${COHERENCE_OFF:-0}" = "1" ]; then
+  coherence_skipped=1
+else
+  coherence_skipped=0
+fi
+
+hook_dir=$(dirname "$0")
+
+if [ "$coherence_skipped" -eq 0 ]; then
+  if ! command -v coherence >/dev/null 2>&1; then
+    if [ -x "$HOME/go/bin/coherence" ]; then
+      PATH="$HOME/go/bin:$PATH"
+      export PATH
+    fi
+  fi
+
+  if ! command -v coherence >/dev/null 2>&1; then
+    echo "coherence: binary not found on PATH; skipping pre-commit checks" >&2
+    echo "          (install with: go install github.com/fireharp/coherence/cmd/coherence@latest)" >&2
+  else
+    coherence scan --staged
+  fi
+fi
+
+"$hook_dir/check-env-leaks.sh"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks is required for this repository's pre-commit hook." >&2
+  echo "Install it with: brew install gitleaks" >&2
+  exit 1
+fi
+
+exec gitleaks git --pre-commit --staged --redact --no-banner .

@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-session",
+  "turn_id": "fixture-turn",
+  "cwd": ".",
+  "hook_event_name": "UserPromptSubmit",
+  "permission_mode": "default",
+  "prompt": "Please design a Temporal workflow with compensation."
+}

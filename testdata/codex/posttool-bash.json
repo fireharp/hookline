@@ -1,0 +1,16 @@
+{
+  "session_id": "fixture-session",
+  "turn_id": "fixture-turn",
+  "cwd": ".",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_use_id": "tool-post",
+  "tool_input": {
+    "command": "go test ./..."
+  },
+  "tool_response": {
+    "exit_code": 0,
+    "output": "ok"
+  }
+}

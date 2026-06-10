@@ -1,0 +1,43 @@
+limits:
+  file_line_limit: 500
+  new_file_line_limit: 300
+  large_diff_added: 700
+
+secrets:
+  env_file: ".env"
+  min_value_length: 6
+  allowed_env_keys: []
+  run_gitleaks: true
+  gitleaks_command:
+    - gitleaks
+    - git
+    - --pre-commit
+    - --staged
+    - --redact
+    - --no-banner
+    - .
+
+dangerous_shell:
+  - 'rm\s+-rf\s+(/|\$HOME|~|\*)'
+  - 'chmod\s+777'
+  - 'curl\b.*\|\s*(sh|bash|zsh)'
+  - 'wget\b.*\|\s*(sh|bash|zsh)'
+  - '\bsudo\b'
+
+sensitive_paths:
+  - "**/auth/**"
+  - "**/billing/**"
+  - "**/chargeback/**"
+  - "**/ledger/**"
+  - "**/payments/**"
+  - "**/security/**"
+  - "**/secrets/**"
+
+skill_triggers:
+  - id: temporal-workflow-skill
+    regex: '(?i)(temporal|workflow|long-running|saga|compensation|durable execution)'
+    skills:
+      - temporal-workflow-design
+      - idempotency-and-compensation
+    severity: info
+    message: "Relevant skills: temporal-workflow-design, idempotency-and-compensation. Read them before changing workflow logic."
