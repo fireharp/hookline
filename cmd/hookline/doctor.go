@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fireharp/hookline/internal/config"
+	"github.com/fireharp/hookline/internal/hookstate"
 	"github.com/fireharp/hookline/internal/recipes"
 	"github.com/fireharp/hookline/internal/telemetry"
 )
@@ -24,6 +26,7 @@ type doctorCheck struct {
 	ID          string `json:"id"`
 	RecipeID    string `json:"recipe_id,omitempty"`
 	OK          bool   `json:"ok"`
+	Severity    string `json:"severity,omitempty"`
 	Message     string `json:"message"`
 	Remediation string `json:"remediation,omitempty"`
 }
@@ -63,6 +66,7 @@ func doctor(ctx context.Context, stdout io.Writer, root string, cfg config.Confi
 		{ID: "project-config", OK: true, Message: filepath.Join(root, ".fireharp", "harness.yaml")},
 		{ID: "enabled-recipes", OK: true, Message: strings.Join(registry.EnabledIDs(), ", ")},
 		{ID: "telemetry", OK: true, Message: telemetry.Path(root, cfg.Telemetry)},
+		{ID: "active-snoozes", OK: true, Message: activeSnoozeMessage(root)},
 	}
 	if len(registry.EnabledIDs()) == 0 {
 		checks[2].Message = "none"
@@ -82,9 +86,11 @@ func doctor(ctx context.Context, stdout io.Writer, root string, cfg config.Confi
 		status := "ok"
 		if !check.OK {
 			status = "fail"
+		} else if check.Severity == "warn" {
+			status = "warn"
 		}
 		fmt.Fprintf(stdout, "%s: %s (%s)\n", check.ID, status, check.Message)
-		if check.Remediation != "" && !check.OK {
+		if check.Remediation != "" && (!check.OK || check.Severity == "warn") {
 			fmt.Fprintf(stdout, "  fix: %s\n", check.Remediation)
 		}
 	}
@@ -148,20 +154,58 @@ func doctorRecipe(ctx context.Context, root string, cfg config.Config, manifest 
 }
 
 func codexHookChecks(root string) []doctorCheck {
-	projectHooks := fileExists(filepath.Join(root, ".codex", "hooks.json"))
+	projectPath := filepath.Join(root, ".codex", "hooks.json")
+	projectHooks := fileExists(projectPath)
 	userHooksPath := ""
 	userHooks := false
 	if home, err := os.UserHomeDir(); err == nil {
 		userHooksPath = filepath.Join(home, ".codex", "hooks.json")
 		userHooks = fileExists(userHooksPath)
 	}
-	return []doctorCheck{{
+	checks := []doctorCheck{{
 		ID:          "codex-hooks",
 		RecipeID:    recipes.CodexHooks,
 		OK:          projectHooks || userHooks,
-		Message:     fmt.Sprintf("project=%t user=%t %s", projectHooks, userHooks, userHooksPath),
+		Message:     fmt.Sprintf("project=%t project_source=%s user=%t user_source=%s %s", projectHooks, hookSourceTag(projectPath), userHooks, hookSourceTag(userHooksPath), userHooksPath),
 		Remediation: "run hookline init --recipe codex-hooks --scope project",
 	}}
+	if projectHooks && userHooks {
+		checks = append(checks, doctorCheck{
+			ID:          "codex-hooks-overlap",
+			RecipeID:    recipes.CodexHooks,
+			OK:          true,
+			Severity:    "warn",
+			Message:     "project hook overrides user hook when source-tagged; fallback dedupe suppresses old duplicate runs",
+			Remediation: "rerun hookline init --recipe codex-hooks --scope both --force to source-tag both hook files",
+		})
+	}
+	return checks
+}
+
+func hookSourceTag(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "missing"
+	}
+	text := string(data)
+	switch {
+	case strings.Contains(text, "--source project"):
+		return "project"
+	case strings.Contains(text, "--source user"):
+		return "user"
+	case strings.Contains(text, "hook codex"):
+		return "auto"
+	default:
+		return "none"
+	}
+}
+
+func activeSnoozeMessage(root string) string {
+	count, err := hookstate.New(root).ActiveSnoozeCount(time.Now())
+	if err != nil {
+		return err.Error()
+	}
+	return fmt.Sprintf("%d", count)
 }
 
 func precommitChecks(root, recipeID string) []doctorCheck {

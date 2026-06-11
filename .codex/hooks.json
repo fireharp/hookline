@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex --source project",
             "timeout": 30,
             "statusMessage": "Hookline policy check"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex --source project",
             "timeout": 30,
             "statusMessage": "Hookline post-tool review"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex --source project",
             "timeout": 30,
             "statusMessage": "Hookline prompt review"
           }
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex",
+            "command": "go run \"$(git rev-parse --show-toplevel)/cmd/hookline\" hook codex --source project",
             "timeout": 30,
             "statusMessage": "Hookline stop review"
           }

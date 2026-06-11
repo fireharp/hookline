@@ -82,7 +82,7 @@ func initRecipes(args []string, stdout io.Writer, root string, cfg config.Config
 			if err != nil {
 				return err
 			}
-			changed, err := writeHookFile(path, opts.Command, opts.Force)
+			changed, err := writeHookFile(path, commandForScope(opts.Command, scope), opts.Force)
 			if err != nil {
 				return err
 			}
@@ -314,6 +314,13 @@ func writeHookFile(path, command string, force bool) (bool, error) {
 		return false, err
 	}
 	return true, os.WriteFile(path, data, 0o644)
+}
+
+func commandForScope(command, scope string) string {
+	if strings.Contains(command, "--source ") || strings.Contains(command, "--source=") {
+		return command
+	}
+	return command + " --source " + scope
 }
 
 func buildCodexHooks(command string) codexHooksFile {

@@ -15,6 +15,8 @@ lives in `.codex/hooks.json`.
 - `go run ./cmd/hookline doctor --json` checks local setup.
 - `go run ./cmd/hookline scan lines --json` reports files over the soft line limit.
 - `go run ./cmd/hookline scan secrets --json` checks staged secret leaks.
+- `go run ./cmd/hookline telemetry tail --limit 20 --json` shows local hook runs.
+- `go run ./cmd/hookline snooze list --json` shows active local steering snoozes.
 - `go run ./cmd/hookline bench --suite smoke --json` runs realistic local scenarios.
 - `coherence review --base=HEAD --worktree --json` checks repo drift before handoff.
 

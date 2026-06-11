@@ -32,10 +32,13 @@ type FileChange struct {
 }
 
 type Decision struct {
-	Mode     string `json:"mode"`
-	RuleID   string `json:"rule_id,omitempty"`
-	Severity string `json:"severity,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Mode        string `json:"mode"`
+	RuleID      string `json:"rule_id,omitempty"`
+	Severity    string `json:"severity,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Snoozed     bool   `json:"-"`
+	SnoozeScope string `json:"-"`
+	SnoozePath  string `json:"-"`
 }
 
 const (

@@ -15,9 +15,17 @@ type Record struct {
 	Time              string `json:"time"`
 	Root              string `json:"root"`
 	CWD               string `json:"cwd,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	TurnID            string `json:"turn_id,omitempty"`
 	Event             string `json:"event,omitempty"`
 	Tool              string `json:"tool,omitempty"`
 	Decision          string `json:"decision,omitempty"`
+	RuleID            string `json:"rule_id,omitempty"`
+	Source            string `json:"source,omitempty"`
+	Deduped           bool   `json:"deduped,omitempty"`
+	Snoozed           bool   `json:"snoozed,omitempty"`
+	SnoozeScope       string `json:"snooze_scope,omitempty"`
+	SnoozePath        string `json:"snooze_path,omitempty"`
 	Reason            string `json:"reason,omitempty"`
 	AdditionalContext string `json:"additional_context,omitempty"`
 	OutputEmpty       bool   `json:"output_empty"`
@@ -25,11 +33,20 @@ type Record struct {
 	DurationMS        int64  `json:"duration_ms"`
 }
 
-func Append(root string, cfg config.Config, input, output []byte, hookErr error, duration time.Duration) error {
+type Meta struct {
+	RuleID      string
+	Source      string
+	Deduped     bool
+	Snoozed     bool
+	SnoozeScope string
+	SnoozePath  string
+}
+
+func Append(root string, cfg config.Config, input, output []byte, hookErr error, duration time.Duration, meta ...Meta) error {
 	if !config.TelemetryEnabled(cfg) {
 		return nil
 	}
-	record := BuildRecord(root, input, output, hookErr, duration)
+	record := BuildRecord(root, input, output, hookErr, duration, meta...)
 	path := Path(root, cfg.Telemetry)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -42,16 +59,26 @@ func Append(root string, cfg config.Config, input, output []byte, hookErr error,
 	return json.NewEncoder(file).Encode(record)
 }
 
-func BuildRecord(root string, input, output []byte, hookErr error, duration time.Duration) Record {
+func BuildRecord(root string, input, output []byte, hookErr error, duration time.Duration, meta ...Meta) Record {
 	record := Record{
 		Time:        time.Now().UTC().Format(time.RFC3339Nano),
 		Root:        root,
 		OutputEmpty: len(output) == 0,
 		DurationMS:  duration.Milliseconds(),
 	}
+	if len(meta) > 0 {
+		record.RuleID = meta[0].RuleID
+		record.Source = meta[0].Source
+		record.Deduped = meta[0].Deduped
+		record.Snoozed = meta[0].Snoozed
+		record.SnoozeScope = meta[0].SnoozeScope
+		record.SnoozePath = meta[0].SnoozePath
+	}
 	var raw map[string]any
 	if err := json.Unmarshal(input, &raw); err == nil {
 		record.CWD = stringField(raw, "cwd")
+		record.SessionID = stringField(raw, "session_id")
+		record.TurnID = stringField(raw, "turn_id")
 		record.Event = stringField(raw, "hook_event_name")
 		record.Tool = stringField(raw, "tool_name")
 	}

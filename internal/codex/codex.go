@@ -17,21 +17,44 @@ type hookOutput struct {
 	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
 }
 
+type Options struct {
+	Root string
+}
+
+type Result struct {
+	Event    types.Event
+	Decision types.Decision
+}
+
 func Handle(ctx context.Context, stdin io.Reader, stdout io.Writer, cfg config.Config) error {
+	_, err := HandleWithOptions(ctx, stdin, stdout, cfg, Options{})
+	return err
+}
+
+func HandleWithOptions(ctx context.Context, stdin io.Reader, stdout io.Writer, cfg config.Config, opts Options) (Result, error) {
 	event, err := Decode(stdin)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
-	decisions, err := engine.Evaluate(ctx, event, cfg)
+	return HandleEvent(ctx, event, stdout, cfg, opts)
+}
+
+func HandleEvent(ctx context.Context, event types.Event, stdout io.Writer, cfg config.Config, opts Options) (Result, error) {
+	root := opts.Root
+	if root == "" {
+		root = event.CWD
+	}
+	decisions, err := engine.EvaluateWithRoot(ctx, event, cfg, root)
 	if err != nil {
-		return err
+		return Result{Event: event}, err
 	}
-	out := encode(event.Event, strictest(decisions))
+	decision := strictest(decisions)
+	out := encode(event.Event, decision)
 	if out == nil {
-		return nil
+		return Result{Event: event, Decision: decision}, nil
 	}
 	enc := json.NewEncoder(stdout)
-	return enc.Encode(out)
+	return Result{Event: event, Decision: decision}, enc.Encode(out)
 }
 
 func Decode(r io.Reader) (types.Event, error) {

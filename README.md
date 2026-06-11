@@ -8,11 +8,14 @@ event, runs local policy checks, and maps the decision back to Codex hook output
 
 ```sh
 go test ./...
+go run ./cmd/hookline recipe list --json
 go run ./cmd/hookline doctor --json
 go run ./cmd/hookline scan lines --json
 go run ./cmd/hookline scan secrets --json
 go run ./cmd/hookline telemetry status --json
 go run ./cmd/hookline telemetry tail --limit 20 --json
+go run ./cmd/hookline snooze list --json
+go run ./cmd/hookline decision list --json
 go run ./cmd/hookline bench --suite smoke --json
 ```
 
@@ -20,28 +23,68 @@ The smoke bench records the full steering loop for each rule: starting problem,
 Hookline signal, agent correction, and final result. See
 [`docs/cases/hookline-steering-results.mdx`](docs/cases/hookline-steering-results.mdx).
 
-## Codex Hook Setup
+## Recipe Setup
+
+Hookline core is recipe-less by default. Built-in recipes are available, but
+they do not affect hook behavior until enabled in config or applied with
+`hookline init --recipe ...`.
+
+Built-in recipes:
+
+- `codex-hooks` writes Codex hook JSON.
+- `coherence` adds deterministic repo consistency checks.
+- `secrets-gitleaks` checks staged env literal leaks and gitleaks findings.
+- `line-count` enables configurable line-count scan and hook review.
+- `agent-steering` enables dangerous-shell, large-diff, sensitive-path, skill,
+  and stop-continuation steering.
+
+One-project setup:
+
+```sh
+go run ./cmd/hookline init \
+  --recipe codex-hooks \
+  --recipe coherence \
+  --recipe secrets-gitleaks \
+  --recipe line-count \
+  --recipe agent-steering
+```
+
+Global Codex hook setup:
+
+```sh
+go install ./cmd/hookline
+"$(go env GOPATH)/bin/hookline" init --recipe codex-hooks --scope user
+```
+
+`doctor` is read-only. Use it to verify setup without repairing anything:
+
+```sh
+go run ./cmd/hookline doctor --json
+go run ./cmd/hookline doctor --recipe coherence --json
+```
+
+## Codex Hooks
 
 Codex can load hooks from user config (`~/.codex/hooks.json`) and project config
-(`<repo>/.codex/hooks.json`). All matching hooks run, so prefer one of these:
-
-- All projects: install Hookline once, then run `hookline init --scope user`.
-- One project only: run `hookline init --scope project` from that repo.
-
-After init, use `/hooks` in Codex to review and trust the new hook definition.
+(`<repo>/.codex/hooks.json`). All matching hooks run. After init, use `/hooks`
+in Codex to review and trust the new hook definition.
 
 For this source repo, the project hook can call:
 
 ```sh
-go run "$(git rev-parse --show-toplevel)/cmd/hookline" hook codex
+go run "$(git rev-parse --show-toplevel)/cmd/hookline" hook codex --source project
 ```
 
 For a global user hook, use an installed binary instead:
 
 ```sh
 go install ./cmd/hookline
-"$(go env GOPATH)/bin/hookline" init --scope user
+"$(go env GOPATH)/bin/hookline" init --recipe codex-hooks --scope user
 ```
+
+`init` writes source-tagged hooks. If user and project hooks are both present,
+the project hook wins and the user hook suppresses itself. Older untagged hooks
+are deduped locally for a short window and show up in telemetry as `source=auto`.
 
 Project opt-out for global hooks:
 
@@ -64,22 +107,46 @@ Telemetry is local-only by default and is written to `.hookline/events.jsonl`.
 Files over `limits.split_review_line_limit` trigger stronger steering when
 touched by a hook event.
 
+Large-file steering can be snoozed or recorded for later runs:
+
+```sh
+hookline snooze add --rule large-file-split-review --path path/to/file.ts --scope session --duration 4h --session "$CODEX_SESSION_ID" --reason "unrelated to current task"
+hookline decision add --rule large-file-split-review --path path/to/file.ts --action keep --why-split "clear seams exist" --why-not-now "unrelated to this task" --result "kept for now"
+hookline telemetry tail --source project --rule large-file-split-review --json
+```
+
+Recipes are enabled explicitly:
+
+```yaml
+recipes:
+  enabled:
+    - codex-hooks
+    - coherence
+    - secrets-gitleaks
+    - line-count
+    - agent-steering
+```
+
+Optional command-plugin manifests can be placed under
+`~/.fireharp/hookline/recipes/` or `.fireharp/hookline/recipes/`, or referenced
+with `recipes.paths`.
+
 `.hookline/` is runtime-only and gitignored as a whole. Config intentionally
 lives outside that directory; see
 [`docs/adr/0001-keep-config-outside-hookline-runtime.md`](docs/adr/0001-keep-config-outside-hookline-runtime.md).
 
 ## Secret Scanning
 
-The pre-commit hook runs:
+The generated pre-commit hook runs the enabled precommit recipes. For
+`secrets-gitleaks`, that means:
 
 ```sh
-.githooks/check-env-leaks.sh
-gitleaks git --pre-commit --staged --redact --no-banner .
+hookline scan secrets
 ```
 
-`check-env-leaks.sh` compares staged additions against literal values in the
-local `.env` file, but reports only env keys and redacted value summaries.
-Gitleaks handles generic token and private-key shapes using `.gitleaks.toml`.
+The scan compares staged additions against literal values in the local `.env`
+file, reports only env keys and redacted value summaries, then runs gitleaks
+with `.gitleaks.toml`.
 
 ## Coherence
 

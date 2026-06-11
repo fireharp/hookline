@@ -28,6 +28,16 @@ func TestBuildCodexHooksUsesCommandForAllEvents(t *testing.T) {
 	}
 }
 
+func TestCommandForScopeAddsSourceTag(t *testing.T) {
+	got := commandForScope("hookline hook codex", "project")
+	if got != "hookline hook codex --source project" {
+		t.Fatalf("expected project source tag, got %q", got)
+	}
+	if existing := commandForScope("hookline hook codex --source user", "project"); existing != "hookline hook codex --source user" {
+		t.Fatalf("expected existing source tag to remain, got %q", existing)
+	}
+}
+
 func TestWriteHookFileRefusesDifferentExistingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".codex", "hooks.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

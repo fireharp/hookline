@@ -15,6 +15,7 @@ import (
 	"github.com/fireharp/hookline/internal/bench"
 	"github.com/fireharp/hookline/internal/codex"
 	"github.com/fireharp/hookline/internal/config"
+	"github.com/fireharp/hookline/internal/hookstate"
 	"github.com/fireharp/hookline/internal/lines"
 	"github.com/fireharp/hookline/internal/recipes"
 	"github.com/fireharp/hookline/internal/secrets"
@@ -47,10 +48,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	switch args[0] {
 	case "hook":
-		if len(args) < 2 || args[1] != "codex" {
-			return errors.New("usage: hookline hook codex")
+		hookOpts, err := parseHookOptions(args[1:])
+		if err != nil {
+			return err
 		}
 		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		event, err := codex.Decode(bytes.NewReader(data))
 		if err != nil {
 			return err
 		}
@@ -72,11 +78,34 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		start := time.Now()
 		var out bytes.Buffer
-		hookErr := codex.Handle(ctx, bytes.NewReader(data), &out, cfg)
+		meta := telemetry.Meta{Source: hookOpts.Source}
+		if projectHookOverridesUser(root, hookOpts.Source) {
+			meta.Deduped = true
+			if err := telemetry.Append(root, cfg, data, nil, nil, time.Since(start), meta); err != nil {
+				fmt.Fprintf(stderr, "hookline telemetry: %v\n", err)
+			}
+			return nil
+		}
+		acquired, err := hookstate.New(root).Acquire(event, data, hookOpts.Source, 2*time.Minute)
+		if err != nil {
+			fmt.Fprintf(stderr, "hookline dedupe: %v\n", err)
+		}
+		if err == nil && !acquired {
+			meta.Deduped = true
+			if err := telemetry.Append(root, cfg, data, nil, nil, time.Since(start), meta); err != nil {
+				fmt.Fprintf(stderr, "hookline telemetry: %v\n", err)
+			}
+			return nil
+		}
+		result, hookErr := codex.HandleEvent(ctx, event, &out, cfg, codex.Options{Root: root})
+		meta.RuleID = result.Decision.RuleID
+		meta.Snoozed = result.Decision.Snoozed
+		meta.SnoozeScope = result.Decision.SnoozeScope
+		meta.SnoozePath = result.Decision.SnoozePath
 		if _, err := stdout.Write(out.Bytes()); err != nil {
 			return err
 		}
-		if err := telemetry.Append(root, cfg, data, out.Bytes(), hookErr, time.Since(start)); err != nil {
+		if err := telemetry.Append(root, cfg, data, out.Bytes(), hookErr, time.Since(start), meta); err != nil {
 			fmt.Fprintf(stderr, "hookline telemetry: %v\n", err)
 		}
 		return hookErr
@@ -94,6 +123,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return scan(ctx, args[1:], stdout, root, cfg, registry)
 	case "telemetry":
 		return telemetryCommand(args[1:], stdout, root, cfg)
+	case "snooze":
+		return snoozeCommand(args[1:], stdout, root)
+	case "decision":
+		return decisionCommand(args[1:], stdout, root)
 	case "bench":
 		return runBench(ctx, args[1:], stdout, cfg)
 	default:
@@ -103,13 +136,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 func usage(w io.Writer) error {
 	_, err := fmt.Fprintln(w, `usage:
-  hookline hook codex
+  hookline hook codex [--source user|project|auto]
   hookline recipe list [--json]
   hookline init --recipe <id>... [--scope project|user|both] [--command <cmd>] [--force] [--json]
   hookline doctor [--json] [--recipe <id>]
   hookline scan lines [--json]
   hookline scan secrets [--json]
-  hookline telemetry status|tail [--limit N] [--json]
+  hookline telemetry status|tail [--limit N] [--session ID] [--event NAME] [--rule ID] [--source SRC] [--json]
+  hookline snooze add|list|clear [--json]
+  hookline decision add|list [--json]
   hookline bench [--suite smoke] [--json]`)
 	return err
 }
@@ -218,6 +253,7 @@ func telemetryCommand(args []string, stdout io.Writer, root string, cfg config.C
 		if err != nil {
 			return err
 		}
+		records = filterTelemetry(records, args[1:])
 		if jsonOut {
 			return writeJSON(stdout, records)
 		}
@@ -226,12 +262,44 @@ func telemetryCommand(args []string, stdout io.Writer, root string, cfg config.C
 			if message == "" {
 				message = record.AdditionalContext
 			}
-			fmt.Fprintf(stdout, "%s %s %s decision=%s empty=%t %s\n", record.Time, record.Event, record.Tool, record.Decision, record.OutputEmpty, message)
+			fmt.Fprintf(stdout, "%s %s %s source=%s rule=%s decision=%s empty=%t deduped=%t snoozed=%t %s\n", record.Time, record.Event, record.Tool, record.Source, record.RuleID, record.Decision, record.OutputEmpty, record.Deduped, record.Snoozed, message)
 		}
 		return nil
 	default:
 		return errors.New("usage: hookline telemetry status|tail [--limit N] [--json]")
 	}
+}
+
+func filterTelemetry(records []telemetry.Record, args []string) []telemetry.Record {
+	session := stringFlag(args, "--session", "")
+	event := stringFlag(args, "--event", "")
+	rule := stringFlag(args, "--rule", "")
+	source := stringFlag(args, "--source", "")
+	onlyDeduped := hasFlag(args, "--deduped")
+	onlySnoozed := hasFlag(args, "--snoozed")
+	var out []telemetry.Record
+	for _, record := range records {
+		if session != "" && record.SessionID != session {
+			continue
+		}
+		if event != "" && record.Event != event {
+			continue
+		}
+		if rule != "" && record.RuleID != rule {
+			continue
+		}
+		if source != "" && record.Source != source {
+			continue
+		}
+		if onlyDeduped && !record.Deduped {
+			continue
+		}
+		if onlySnoozed && !record.Snoozed {
+			continue
+		}
+		out = append(out, record)
+	}
+	return out
 }
 
 func hasFlag(args []string, flag string) bool {
@@ -256,6 +324,18 @@ func intFlag(args []string, flag string, fallback int) int {
 			if _, err := fmt.Sscanf(strings.TrimPrefix(arg, flag+"="), "%d", &value); err == nil {
 				return value
 			}
+		}
+	}
+	return fallback
+}
+
+func stringFlag(args []string, flag, fallback string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, flag+"=") {
+			return strings.TrimPrefix(arg, flag+"=")
 		}
 	}
 	return fallback

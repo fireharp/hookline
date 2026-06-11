@@ -7,14 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fireharp/hookline/internal/config"
+	"github.com/fireharp/hookline/internal/hookstate"
 	"github.com/fireharp/hookline/internal/recipes"
 	"github.com/fireharp/hookline/internal/types"
 )
 
 func Evaluate(ctx context.Context, event types.Event, cfg config.Config) ([]types.Decision, error) {
+	return EvaluateWithRoot(ctx, event, cfg, event.CWD)
+}
+
+func EvaluateWithRoot(ctx context.Context, event types.Event, cfg config.Config, root string) ([]types.Decision, error) {
+	if root == "" {
+		root = event.CWD
+	}
 	var decisions []types.Decision
 	switch event.Event {
 	case "PreToolUse":
@@ -26,10 +36,10 @@ func Evaluate(ctx context.Context, event types.Event, cfg config.Config) ([]type
 			decisions = append(decisions, skillTriggers(event, cfg)...)
 		}
 	case "PostToolUse":
-		decisions = append(decisions, diffChecks(event.CWD, cfg)...)
+		decisions = append(decisions, diffChecks(root, event, cfg)...)
 	case "Stop":
 		if !event.StopHookActive {
-			stop, err := stopChecks(ctx, event.CWD, cfg)
+			stop, err := stopChecks(ctx, event, root, cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -82,16 +92,19 @@ func skillTriggers(event types.Event, cfg config.Config) []types.Decision {
 	return decisions
 }
 
-func diffChecks(root string, cfg config.Config) []types.Decision {
+func diffChecks(root string, event types.Event, cfg config.Config) []types.Decision {
 	var decisions []types.Decision
 	stats := changedFiles(root)
 	if recipeEnabled(cfg, recipes.LineCount) {
-		if files := oversizedTouchedFiles(root, stats, cfg); len(files) > 0 {
+		files, snoozed := activeOversizedFiles(root, event, stats, cfg)
+		if len(files) > 0 {
 			decisions = append(decisions, types.Decision{
 				Mode:    types.ModeContinue,
 				RuleID:  "large-file-split-review",
-				Message: "Touched very large file(s): " + oversizedSummary(files) + ". Split into smaller modules or explicitly justify keeping them cohesive.",
+				Message: largeFileMessage(root, event, files),
 			})
+		} else if snoozed != nil {
+			decisions = append(decisions, *snoozed)
 		}
 	}
 	if !recipeEnabled(cfg, recipes.AgentSteering) {
@@ -118,9 +131,10 @@ func diffChecks(root string, cfg config.Config) []types.Decision {
 	return decisions
 }
 
-func stopChecks(ctx context.Context, root string, cfg config.Config) ([]types.Decision, error) {
+func stopChecks(ctx context.Context, event types.Event, root string, cfg config.Config) ([]types.Decision, error) {
 	_ = ctx
 	var failures []string
+	var snoozed *types.Decision
 	stats := changedFiles(root)
 	if recipeEnabled(cfg, recipes.AgentSteering) {
 		if sensitiveWithoutTests(stats, cfg) {
@@ -134,11 +148,17 @@ func stopChecks(ctx context.Context, root string, cfg config.Config) ([]types.De
 		}
 	}
 	if recipeEnabled(cfg, recipes.LineCount) {
-		if files := oversizedTouchedFiles(root, stats, cfg); len(files) > 0 {
-			failures = append(failures, "touched very large file(s): "+oversizedSummary(files)+". Split into smaller modules or explicitly justify cohesion")
+		files, skipped := activeOversizedFiles(root, event, stats, cfg)
+		if len(files) > 0 {
+			failures = append(failures, largeFileMessage(root, event, files))
+		} else if skipped != nil {
+			snoozed = skipped
 		}
 	}
 	if len(failures) == 0 {
+		if snoozed != nil {
+			return []types.Decision{*snoozed}, nil
+		}
 		return nil, nil
 	}
 	return []types.Decision{{
@@ -208,6 +228,130 @@ func oversizedTouchedFiles(root string, stats []diffStat, cfg config.Config) []o
 		}
 	}
 	return files
+}
+
+func activeOversizedFiles(root string, event types.Event, stats []diffStat, cfg config.Config) ([]oversizedFile, *types.Decision) {
+	files := oversizedTouchedFiles(root, stats, cfg)
+	if len(files) == 0 {
+		return nil, nil
+	}
+	store := hookstate.New(root)
+	now := time.Now()
+	var active []oversizedFile
+	var lastSnooze *hookstate.Snooze
+	for _, file := range files {
+		snooze, err := store.ActiveSnooze("large-file-split-review", file.Path, event.SessionID, now)
+		if err != nil || snooze == nil {
+			active = append(active, file)
+			continue
+		}
+		lastSnooze = snooze
+	}
+	if len(active) > 0 {
+		return active, nil
+	}
+	if lastSnooze == nil {
+		return nil, nil
+	}
+	return nil, &types.Decision{
+		Mode:        types.ModeAllow,
+		RuleID:      "large-file-split-review",
+		Snoozed:     true,
+		SnoozeScope: lastSnooze.Scope,
+		SnoozePath:  lastSnooze.Path,
+	}
+}
+
+func largeFileMessage(root string, event types.Event, files []oversizedFile) string {
+	first := files[0]
+	message := "Touched very large file(s): " + oversizedSummary(files) + ". Choose one: split now, snooze if unrelated, or record a keep decision with why-split and why-not-now."
+	message += " Suggested seam: " + suggestedSeam(first.Path) + "."
+	if decision := latestDecisionSummary(root, first.Path); decision != "" {
+		message += " " + decision
+	}
+	message += " Snooze: " + snoozeCommand(event.SessionID, first.Path) + "."
+	message += " Record decision: " + decisionCommand(event.SessionID, first.Path) + "."
+	if len(files) > 1 {
+		message += " Repeat per path or use --path '*'."
+	}
+	return message
+}
+
+func latestDecisionSummary(root, path string) string {
+	decision, err := hookstate.New(root).LatestDecision("large-file-split-review", path)
+	if err != nil || decision == nil {
+		return ""
+	}
+	var parts []string
+	if decision.Action != "" {
+		parts = append(parts, "action="+decision.Action)
+	}
+	if decision.WhySplit != "" {
+		parts = append(parts, "why split: "+decision.WhySplit)
+	}
+	if decision.WhyNotNow != "" {
+		parts = append(parts, "why not now: "+decision.WhyNotNow)
+	}
+	if decision.Result != "" {
+		parts = append(parts, "result: "+decision.Result)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Previous decision: " + strings.Join(parts, "; ") + "."
+}
+
+func suggestedSeam(path string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.Contains(lower, "fixtures") && strings.Contains(lower, ".test."):
+		return "keep a thin runner and split fixture cases by domain under fixtures/*.test.*"
+	case strings.Contains(lower, "group_runner"):
+		return "extract routing tables, handlers, and tests into focused modules"
+	case isTest(lower):
+		return "split test suites by behavior or fixture type"
+	default:
+		return "extract cohesive helpers/types and keep a thin entrypoint"
+	}
+}
+
+func snoozeCommand(sessionID, path string) string {
+	args := []string{
+		"hookline", "snooze", "add",
+		"--rule", "large-file-split-review",
+		"--path", path,
+		"--scope", "session",
+		"--duration", "4h",
+	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
+	args = append(args, "--reason", "unrelated to current task")
+	return shellWords(args)
+}
+
+func decisionCommand(sessionID, path string) string {
+	args := []string{
+		"hookline", "decision", "add",
+		"--rule", "large-file-split-review",
+		"--path", path,
+		"--action", "keep",
+		"--why-split", "obvious split seams exist",
+		"--why-not-now", "unrelated or too risky for this task",
+		"--result", "kept for now",
+	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
+	return shellWords(args)
+}
+
+func shellWords(args []string) string {
+	var quoted []string
+	for _, arg := range args {
+		quoted = append(quoted, strconv.Quote(arg))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func oversizedSummary(files []oversizedFile) string {
