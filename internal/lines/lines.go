@@ -12,15 +12,18 @@ import (
 )
 
 type Result struct {
-	Root       string      `json:"root"`
-	Limit      int         `json:"limit"`
-	Violations []Violation `json:"violations"`
+	Root             string    `json:"root"`
+	Limit            int       `json:"limit"`
+	SplitReviewLimit int       `json:"split_review_limit,omitempty"`
+	Findings         []Finding `json:"findings,omitempty"`
 }
 
-type Violation struct {
-	Path  string `json:"path"`
-	Lines int    `json:"lines"`
-	Limit int    `json:"limit"`
+type Finding struct {
+	Path     string `json:"path"`
+	Lines    int    `json:"lines"`
+	Limit    int    `json:"limit"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
 }
 
 func Scan(root string, limits config.LimitsConfig) (Result, error) {
@@ -31,7 +34,7 @@ func Scan(root string, limits config.LimitsConfig) (Result, error) {
 			return Result{}, err
 		}
 	}
-	result := Result{Root: root, Limit: limits.FileLineLimit}
+	result := Result{Root: root, Limit: limits.FileLineLimit, SplitReviewLimit: limits.SplitReviewLineLimit}
 	for _, rel := range files {
 		if !scannable(rel) {
 			continue
@@ -45,7 +48,19 @@ func Scan(root string, limits config.LimitsConfig) (Result, error) {
 			limit = 500
 		}
 		if n > limit {
-			result.Violations = append(result.Violations, Violation{Path: rel, Lines: n, Limit: limit})
+			severity := "advisory"
+			message := "File is over the soft line-count target; review whether to split or keep cohesive."
+			if limits.SplitReviewLineLimit > 0 && n >= limits.SplitReviewLineLimit {
+				severity = "split-review"
+				message = "File is far over the soft line-count target; split it or explicitly justify keeping it cohesive."
+			}
+			result.Findings = append(result.Findings, Finding{
+				Path:     rel,
+				Lines:    n,
+				Limit:    limit,
+				Severity: severity,
+				Message:  message,
+			})
 		}
 	}
 	return result, nil
@@ -106,7 +121,7 @@ func countLines(path string) (int, error) {
 
 func scannable(path string) bool {
 	switch filepath.Ext(path) {
-	case ".go", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".md", ".sh", ".yaml", ".yml", ".toml", ".json":
+	case ".go", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".md", ".mdx", ".sh", ".yaml", ".yml", ".toml", ".json":
 		return true
 	default:
 		return false

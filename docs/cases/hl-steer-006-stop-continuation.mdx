@@ -1,0 +1,61 @@
+---
+id: HL-STEER-006
+title: Stop Continuation Steering
+description: Hookline asks Codex to continue once when the agent tries to stop with an unresolved TODO.
+date: 2026-06-10
+status: verified
+suite: smoke
+rule: Stop-hook continue once review
+project: temporary smoke-bench repo
+command: go run ./cmd/hookline bench --suite smoke --json
+tags:
+  - hookline
+  - steering
+  - codex-hooks
+  - stop-hook
+---
+
+# HL-STEER-006: Stop Continuation
+
+## Initial State
+
+- `notes.md` has a newly added TODO line.
+- Agent attempts to stop.
+- `stop_hook_active` is `false`.
+
+## Replay Messages
+
+| Actor | Message |
+| --- | --- |
+| agent | I am done. |
+| hookline | Before stopping, address or justify the new TODO/FIXME. |
+| agent | I replaced the TODO with a concrete follow-up reference. |
+
+## Hook Evidence
+
+```json
+{
+  "event": "Stop",
+  "input": {
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "cwd": "<fixture>"
+  },
+  "output": {
+    "decision": "block",
+    "reason": "Before stopping, address or explicitly justify: new TODO/FIXME added"
+  },
+  "effect": "continuation prompt; not a hard failure"
+}
+```
+
+## Final State
+
+- TODO line removed.
+- Concrete follow-up reference is present.
+- Second `Stop` evaluation returns allow.
+
+## Verification
+
+- Stop does not request continuation after the correction.
+- Bench result: `resolved: true`, `status: pass`.

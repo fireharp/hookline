@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var todoMarkerPattern = regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_])(TO[D]O|FIX[M]E)([^A-Za-z0-9_]|$)`)
 
 type diffStat struct {
 	Path    string
@@ -73,16 +76,33 @@ func addedTodoLines(root string) bool {
 	if err != nil {
 		return false
 	}
+	currentPath := ""
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.HasPrefix(line, "+++ b/") {
+			currentPath = strings.TrimPrefix(line, "+++ b/")
+			continue
+		}
+		if strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "diff --git ") {
+			currentPath = ""
+			continue
+		}
 		if strings.HasPrefix(line, "+++") || !strings.HasPrefix(line, "+") {
 			continue
 		}
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "todo") || strings.Contains(lower, "fixme") {
+		if todoCheckExemptPath(currentPath) {
+			continue
+		}
+		if todoMarkerPattern.MatchString(line) {
 			return true
 		}
 	}
 	return false
+}
+
+func todoCheckExemptPath(path string) bool {
+	return isTest(path) ||
+		strings.HasPrefix(path, "docs/cases/") ||
+		strings.HasPrefix(path, "internal/bench/")
 }

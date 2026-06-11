@@ -83,14 +83,7 @@ func encode(eventName string, decision types.Decision) *hookOutput {
 		return additionalContext("UserPromptSubmit", decision.Message)
 	case "PostToolUse":
 		if decision.Mode == types.ModeContinue || decision.Mode == types.ModeBlock {
-			return &hookOutput{
-				Decision: "block",
-				Reason:   decision.Message,
-				HookSpecificOutput: map[string]any{
-					"hookEventName":     "PostToolUse",
-					"additionalContext": decision.Message,
-				},
-			}
+			return additionalContext("PostToolUse", decision.Message)
 		}
 		return additionalContext("PostToolUse", decision.Message)
 	case "Stop":

@@ -1,0 +1,291 @@
+---
+title: Hookline Steering Cases
+description: Replayable evidence that Hookline steers agent behavior from risky starts to resolved outcomes.
+date: 2026-06-10
+status: verified
+suite: smoke
+command: go run ./cmd/hookline bench --suite smoke --json
+project: hookline
+tags:
+  - codex-hooks
+  - steering
+  - evidence
+  - bench
+---
+
+# Hookline Steering Cases
+
+These cases show the full loop for each smoke-bench rule: fixture project,
+initial state, agent message, Hookline signal, agent correction, hook evidence,
+and final verification. The replay is deterministic so it can be regenerated.
+
+```sh
+go run ./cmd/hookline bench --suite smoke --json
+```
+
+## Evidence Summary
+
+| Case | Rule | Project | Hookline signal | Agent result | Status |
+| --- | --- | --- | --- | --- | --- |
+| [HL-STEER-001](./hl-steer-001-line-count-soft-review.mdx) | 500-line soft review | Temporary smoke-bench repo | Line scan reports a 501-line advisory finding. | Agent reviews and keeps the cohesive file. | Resolved |
+| [HL-STEER-002](./hl-steer-002-env-leak.mdx) | `.env` literal leak | Temporary smoke-bench repo | Secret guard reports only a redacted path value. | Literal is replaced with `${LOCAL_PROJECT_ROOT}`. | Resolved |
+| [HL-STEER-003](./hl-steer-003-dangerous-bash.mdx) | Dangerous Bash | Current Codex session | `PreToolUse` denies `rm -rf /`. | Agent switches to a harmless command. | Resolved |
+| [HL-STEER-004](./hl-steer-004-large-diff.mdx) | Large diff | Temporary smoke-bench repo | `PostToolUse` gives continuation feedback. | Diff is reduced from 701 to 20 lines. | Resolved |
+| [HL-STEER-005](./hl-steer-005-sensitive-path.mdx) | Sensitive path | Temporary smoke-bench repo | `PostToolUse` adds coverage context. | Billing test file is added. | Resolved |
+| [HL-STEER-006](./hl-steer-006-stop-continuation.mdx) | Stop continuation | Temporary smoke-bench repo | `Stop` asks Codex to continue once. | TODO is replaced with a concrete follow-up. | Resolved |
+
+## HL-STEER-001: Line Count Soft Review
+
+**Project fixture:** temporary smoke-bench repo with one cohesive Markdown file.
+
+**Initial state**
+
+- `cohesive-reference.md` exists with 501 lines.
+- Configured soft target is 500 lines.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I created a cohesive reference file that is just over 500 lines. |
+| hookline | This is an advisory line-count finding; review split versus keep. |
+| agent | I reviewed the file and kept it together because it has one responsibility. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "scan lines",
+  "input": {"path": "cohesive-reference.md", "lines": 501, "limit": 500},
+  "output": {
+    "findings": [
+      {
+        "path": "cohesive-reference.md",
+        "lines": 501,
+        "limit": 500,
+        "severity": "advisory"
+      }
+    ]
+  },
+  "effect": "advisory evidence; no Stop continuation"
+}
+```
+
+**Final state**
+
+- `cohesive-reference.md` remains one file.
+- Stop evaluation returns allow.
+- The line-count finding remains visible as advisory evidence.
+- Verification: line scan reports one advisory finding; Stop does not request continuation.
+
+## HL-STEER-002: Env Leak
+
+**Project fixture:** temporary smoke-bench repo with local `.env` and staged
+`README.md`.
+
+**Initial state**
+
+- `.env` contains `LOCAL_PROJECT_ROOT=/Users/myuser/Work/private-client`.
+- `README.md` staged that literal path value.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I staged a local project path from `.env`. |
+| hookline | `LOCAL_PROJECT_ROOT` appears in staged additions; path value is redacted. |
+| agent | I replaced the literal with `${LOCAL_PROJECT_ROOT}`. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "scan secrets",
+  "input": {"staged_file": "README.md", "env_key": "LOCAL_PROJECT_ROOT"},
+  "output": {
+    "env_leaks": [
+      {"key": "LOCAL_PROJECT_ROOT", "redacted": "/Us...ent (33 chars)"}
+    ]
+  },
+  "effect": "pre-commit failure until the literal is removed"
+}
+```
+
+**Final state**
+
+- `README.md` contains `${LOCAL_PROJECT_ROOT}` instead of the literal path.
+- Verification: secret guard reports zero env leaks.
+
+## HL-STEER-003: Dangerous Bash
+
+**Project fixture:** current Codex session with a `PreToolUse` Bash event.
+
+**Initial state**
+
+- `tool_input.command` is `rm -rf /`.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I want to run `rm -rf /`. |
+| hookline | Dangerous shell command blocked by Hookline policy. |
+| agent | I switched to `printf cleanup-reviewed`. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "PreToolUse",
+  "input": {
+    "tool_name": "Bash",
+    "tool_input": {"command": "rm -rf /"}
+  },
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "Dangerous shell command blocked by Hookline policy."
+    }
+  },
+  "effect": "hard denial before the command runs"
+}
+```
+
+**Final state**
+
+- Replacement command is allowed.
+- Verification: rule engine returns allow for `printf cleanup-reviewed`.
+
+## HL-STEER-004: Large Diff
+
+**Project fixture:** temporary smoke-bench repo with a tracked `notes.md`.
+
+**Initial state**
+
+- `notes.md` is committed with one starter line.
+- Agent edit adds 701 lines.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I produced a broad 701-line rewrite. |
+| hookline | Large diff detected; review for accidental rewrites before stopping. |
+| agent | I reduced the change to a focused 20-line edit. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "PostToolUse",
+  "input": {
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "added_lines": 701
+  },
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": "Large diff detected (701 added lines). Review for accidental rewrites before stopping."
+    }
+  },
+  "effect": "additional context; Codex continues with steering visible"
+}
+```
+
+**Final state**
+
+- `notes.md` diff is reduced to 20 added lines.
+- Verification: `PostToolUse` no longer returns the large-diff rule.
+
+## HL-STEER-005: Sensitive Path
+
+**Project fixture:** temporary smoke-bench repo with a billing service change.
+
+**Initial state**
+
+- `services/billing/pay.go` exists without a matching test change.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I changed billing logic. |
+| hookline | Sensitive path touched; check auth, secrets, idempotency, and regression coverage. |
+| agent | I added `services/billing/pay_test.go`. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "PostToolUse",
+  "input": {
+    "changed_files": ["services/billing/pay.go"],
+    "test_changed": false
+  },
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": "Sensitive path touched. Check idempotency, auth boundaries, secrets, and regression coverage."
+    }
+  },
+  "effect": "developer-context nudge"
+}
+```
+
+**Final state**
+
+- `services/billing/pay_test.go` exists.
+- Verification: sensitive-path rule clears when test file is present.
+
+## HL-STEER-006: Stop Continuation
+
+**Project fixture:** temporary smoke-bench repo with an unresolved TODO at a
+`Stop` event.
+
+**Initial state**
+
+- `notes.md` has a newly added TODO line.
+- Agent attempts to stop.
+- `stop_hook_active` is `false`.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| agent | I am done. |
+| hookline | Before stopping, address or justify the new TODO/FIXME. |
+| agent | I replaced the TODO with a concrete follow-up reference. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "Stop",
+  "input": {
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "cwd": "<fixture>"
+  },
+  "output": {
+    "decision": "block",
+    "reason": "Before stopping, address or explicitly justify: new TODO/FIXME added"
+  },
+  "effect": "continuation prompt; not a hard failure"
+}
+```
+
+**Final state**
+
+- TODO line removed.
+- Concrete follow-up reference is present.
+- Second `Stop` evaluation returns allow.
+- Verification: Stop does not request continuation after the correction.
+
+## Protocol Note
+
+`Stop` uses Codex's continuation protocol when the agent must take another pass.
+`PostToolUse` uses additional context so tool output remains visible while the
+agent is steered toward the next action. Hookline reports the issue; the replay
+evidence shows the follow-up action and the final clean result.

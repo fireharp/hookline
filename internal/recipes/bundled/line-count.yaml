@@ -1,0 +1,7 @@
+id: line-count
+title: Line Count
+description: Keep file-size review targets configurable and advisory.
+surfaces:
+  - doctor
+  - hook
+  - scan

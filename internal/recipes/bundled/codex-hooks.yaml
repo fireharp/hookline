@@ -1,0 +1,7 @@
+id: codex-hooks
+title: Codex Hooks
+description: Install Codex hook wiring that invokes Hookline.
+surfaces:
+  - codex
+  - doctor
+  - init

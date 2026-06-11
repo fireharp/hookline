@@ -1,13 +1,16 @@
 package engine
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/fireharp/hookline/internal/config"
-	"github.com/fireharp/hookline/internal/lines"
+	"github.com/fireharp/hookline/internal/recipes"
 	"github.com/fireharp/hookline/internal/types"
 )
 
@@ -15,9 +18,13 @@ func Evaluate(ctx context.Context, event types.Event, cfg config.Config) ([]type
 	var decisions []types.Decision
 	switch event.Event {
 	case "PreToolUse":
-		decisions = append(decisions, dangerousShell(event, cfg)...)
+		if recipeEnabled(cfg, recipes.AgentSteering) {
+			decisions = append(decisions, dangerousShell(event, cfg)...)
+		}
 	case "UserPromptSubmit":
-		decisions = append(decisions, skillTriggers(event, cfg)...)
+		if recipeEnabled(cfg, recipes.AgentSteering) {
+			decisions = append(decisions, skillTriggers(event, cfg)...)
+		}
 	case "PostToolUse":
 		decisions = append(decisions, diffChecks(event.CWD, cfg)...)
 	case "Stop":
@@ -78,6 +85,18 @@ func skillTriggers(event types.Event, cfg config.Config) []types.Decision {
 func diffChecks(root string, cfg config.Config) []types.Decision {
 	var decisions []types.Decision
 	stats := changedFiles(root)
+	if recipeEnabled(cfg, recipes.LineCount) {
+		if files := oversizedTouchedFiles(root, stats, cfg); len(files) > 0 {
+			decisions = append(decisions, types.Decision{
+				Mode:    types.ModeContinue,
+				RuleID:  "large-file-split-review",
+				Message: "Touched very large file(s): " + oversizedSummary(files) + ". Split into smaller modules or explicitly justify keeping them cohesive.",
+			})
+		}
+	}
+	if !recipeEnabled(cfg, recipes.AgentSteering) {
+		return decisions
+	}
 	added := 0
 	for _, stat := range stats {
 		added += stat.Added
@@ -102,22 +121,22 @@ func diffChecks(root string, cfg config.Config) []types.Decision {
 func stopChecks(ctx context.Context, root string, cfg config.Config) ([]types.Decision, error) {
 	_ = ctx
 	var failures []string
-	lineResult, err := lines.Scan(root, cfg.Limits)
-	if err != nil {
-		return nil, err
-	}
-	for _, violation := range lineResult.Violations {
-		failures = append(failures, fmt.Sprintf("%s has %d lines (limit %d)", violation.Path, violation.Lines, violation.Limit))
-	}
 	stats := changedFiles(root)
-	if sensitiveWithoutTests(stats, cfg) {
-		failures = append(failures, "sensitive paths changed without a test file change")
+	if recipeEnabled(cfg, recipes.AgentSteering) {
+		if sensitiveWithoutTests(stats, cfg) {
+			failures = append(failures, "sensitive paths changed without a test file change")
+		}
+		if codeWithoutTests(stats) {
+			failures = append(failures, "code changed without a test file change")
+		}
+		if addedTodoLines(root) {
+			failures = append(failures, "new TODO/FIXME added")
+		}
 	}
-	if codeWithoutTests(stats) {
-		failures = append(failures, "code changed without a test file change")
-	}
-	if addedTodoLines(root) {
-		failures = append(failures, "new TODO/FIXME added")
+	if recipeEnabled(cfg, recipes.LineCount) {
+		if files := oversizedTouchedFiles(root, stats, cfg); len(files) > 0 {
+			failures = append(failures, "touched very large file(s): "+oversizedSummary(files)+". Split into smaller modules or explicitly justify cohesion")
+		}
 	}
 	if len(failures) == 0 {
 		return nil, nil
@@ -127,6 +146,15 @@ func stopChecks(ctx context.Context, root string, cfg config.Config) ([]types.De
 		RuleID:  "stop-review",
 		Message: "Before stopping, address or explicitly justify: " + strings.Join(failures, "; "),
 	}}, nil
+}
+
+func recipeEnabled(cfg config.Config, id string) bool {
+	for _, enabled := range cfg.Recipes.Enabled {
+		if enabled == id {
+			return true
+		}
+	}
+	return false
 }
 
 func sensitiveWithoutTests(stats []diffStat, cfg config.Config) bool {
@@ -157,6 +185,55 @@ func codeWithoutTests(stats []diffStat) bool {
 		}
 	}
 	return code && !tests
+}
+
+type oversizedFile struct {
+	Path  string
+	Lines int
+}
+
+func oversizedTouchedFiles(root string, stats []diffStat, cfg config.Config) []oversizedFile {
+	limit := cfg.Limits.SplitReviewLineLimit
+	if limit <= 0 {
+		return nil
+	}
+	var files []oversizedFile
+	for _, stat := range stats {
+		if !isCode(stat.Path) {
+			continue
+		}
+		lines, err := lineCount(filepath.Join(root, stat.Path))
+		if err == nil && lines >= limit {
+			files = append(files, oversizedFile{Path: stat.Path, Lines: lines})
+		}
+	}
+	return files
+}
+
+func oversizedSummary(files []oversizedFile) string {
+	var parts []string
+	for i, file := range files {
+		if i >= 3 {
+			parts = append(parts, fmt.Sprintf("+%d more", len(files)-i))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d lines)", file.Path, file.Lines))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func lineCount(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	count := 0
+	for scanner.Scan() {
+		count++
+	}
+	return count, scanner.Err()
 }
 
 func isTest(path string) bool {

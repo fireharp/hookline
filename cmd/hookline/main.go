@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,14 +9,16 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fireharp/hookline/internal/bench"
 	"github.com/fireharp/hookline/internal/codex"
 	"github.com/fireharp/hookline/internal/config"
 	"github.com/fireharp/hookline/internal/lines"
+	"github.com/fireharp/hookline/internal/recipes"
 	"github.com/fireharp/hookline/internal/secrets"
+	"github.com/fireharp/hookline/internal/telemetry"
 )
 
 func main() {
@@ -37,17 +40,60 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return err
 	}
+	registry, err := recipes.Load(root, cfg)
+	if err != nil {
+		return err
+	}
 
 	switch args[0] {
 	case "hook":
 		if len(args) < 2 || args[1] != "codex" {
 			return errors.New("usage: hookline hook codex")
 		}
-		return codex.Handle(ctx, stdin, stdout, cfg)
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		if eventRoot := hookEventRoot(data); eventRoot != "" {
+			if found, err := config.FindRoot(eventRoot); err == nil {
+				root = found
+				cfg, err = config.Load(root)
+				if err != nil {
+					return err
+				}
+				registry, err = recipes.Load(root, cfg)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if !config.HooksEnabled(cfg) || !registry.HasEnabledSurface("hook") {
+			return nil
+		}
+		start := time.Now()
+		var out bytes.Buffer
+		hookErr := codex.Handle(ctx, bytes.NewReader(data), &out, cfg)
+		if _, err := stdout.Write(out.Bytes()); err != nil {
+			return err
+		}
+		if err := telemetry.Append(root, cfg, data, out.Bytes(), hookErr, time.Since(start)); err != nil {
+			fmt.Fprintf(stderr, "hookline telemetry: %v\n", err)
+		}
+		return hookErr
+	case "init":
+		return initRecipes(args[1:], stdout, root, cfg, registry)
 	case "doctor":
-		return doctor(ctx, stdout, root, cfg, hasFlag(args, "--json"))
+		opts, err := parseDoctorOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return doctor(ctx, stdout, root, cfg, registry, opts)
+	case "recipe":
+		return recipeCommand(args[1:], stdout, registry)
 	case "scan":
-		return scan(ctx, args[1:], stdout, root, cfg)
+		return scan(ctx, args[1:], stdout, root, cfg, registry)
+	case "telemetry":
+		return telemetryCommand(args[1:], stdout, root, cfg)
 	case "bench":
 		return runBench(ctx, args[1:], stdout, cfg)
 	default:
@@ -58,20 +104,26 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 func usage(w io.Writer) error {
 	_, err := fmt.Fprintln(w, `usage:
   hookline hook codex
-  hookline doctor [--json]
+  hookline recipe list [--json]
+  hookline init --recipe <id>... [--scope project|user|both] [--command <cmd>] [--force] [--json]
+  hookline doctor [--json] [--recipe <id>]
   hookline scan lines [--json]
   hookline scan secrets [--json]
+  hookline telemetry status|tail [--limit N] [--json]
   hookline bench [--suite smoke] [--json]`)
 	return err
 }
 
-func scan(ctx context.Context, args []string, stdout io.Writer, root string, cfg config.Config) error {
+func scan(ctx context.Context, args []string, stdout io.Writer, root string, cfg config.Config, registry recipes.Registry) error {
 	if len(args) == 0 {
 		return errors.New("usage: hookline scan lines|secrets")
 	}
 	jsonOut := hasFlag(args, "--json")
 	switch args[0] {
 	case "lines":
+		if _, ok := registry.Get(recipes.LineCount); !ok {
+			return errors.New("line-count recipe is not loaded")
+		}
 		result, err := lines.Scan(root, cfg.Limits)
 		if err != nil {
 			return err
@@ -79,15 +131,19 @@ func scan(ctx context.Context, args []string, stdout io.Writer, root string, cfg
 		if jsonOut {
 			return writeJSON(stdout, result)
 		}
-		for _, v := range result.Violations {
-			fmt.Fprintf(stdout, "%s:%d exceeds %d lines\n", v.Path, v.Lines, v.Limit)
+		for _, v := range result.Findings {
+			fmt.Fprintf(stdout, "%s:%d over soft target %d lines; review split vs keep\n", v.Path, v.Lines, v.Limit)
 		}
-		if len(result.Violations) > 0 {
-			return fmt.Errorf("%d file(s) exceed line limits", len(result.Violations))
+		if len(result.Findings) > 0 {
+			fmt.Fprintln(stdout, "line scan completed with advisory findings")
+			return nil
 		}
 		fmt.Fprintln(stdout, "line scan passed")
 		return nil
 	case "secrets":
+		if _, ok := registry.Get(recipes.SecretsGitleaks); !ok {
+			return errors.New("secrets-gitleaks recipe is not loaded")
+		}
 		result, err := secrets.ScanStaged(ctx, root, cfg.Secrets)
 		if err != nil {
 			return err
@@ -135,50 +191,47 @@ func runBench(ctx context.Context, args []string, stdout io.Writer, cfg config.C
 	return nil
 }
 
-func doctor(ctx context.Context, stdout io.Writer, root string, cfg config.Config, jsonOut bool) error {
-	type check struct {
-		ID      string `json:"id"`
-		OK      bool   `json:"ok"`
-		Message string `json:"message"`
+func telemetryCommand(args []string, stdout io.Writer, root string, cfg config.Config) error {
+	if len(args) == 0 {
+		return errors.New("usage: hookline telemetry status|tail [--limit N] [--json]")
 	}
-	checks := []check{
-		{ID: "root", OK: root != "", Message: root},
-		{ID: "project-config", OK: true, Message: filepath.Join(root, ".fireharp", "harness.yaml")},
-		{ID: "codex-hooks", OK: fileExists(filepath.Join(root, ".codex", "hooks.json")), Message: ".codex/hooks.json"},
-		{ID: "pre-commit", OK: fileExists(filepath.Join(root, ".githooks", "pre-commit")), Message: ".githooks/pre-commit"},
-		{ID: "gitleaks", OK: commandExists("gitleaks"), Message: "gitleaks on PATH"},
-		{ID: "line-limit", OK: cfg.Limits.FileLineLimit > 0, Message: fmt.Sprintf("%d", cfg.Limits.FileLineLimit)},
-	}
-	if commandExists("coherence") {
-		cmd := exec.CommandContext(ctx, "coherence", "doctor", "--json")
-		cmd.Dir = root
-		if err := cmd.Run(); err != nil {
-			checks = append(checks, check{ID: "coherence", OK: false, Message: err.Error()})
-		} else {
-			checks = append(checks, check{ID: "coherence", OK: true, Message: "coherence doctor passed"})
+	jsonOut := hasFlag(args, "--json")
+	switch args[0] {
+	case "status":
+		count, err := telemetry.Count(root, cfg.Telemetry)
+		if err != nil {
+			return err
 		}
-	} else {
-		checks = append(checks, check{ID: "coherence", OK: false, Message: "coherence not on PATH"})
-	}
-	ok := true
-	for _, c := range checks {
-		ok = ok && c.OK
-	}
-	result := map[string]any{"ok": ok, "checks": checks}
-	if jsonOut {
-		return writeJSON(stdout, result)
-	}
-	for _, c := range checks {
-		status := "ok"
-		if !c.OK {
-			status = "fail"
+		status := map[string]any{
+			"enabled": config.TelemetryEnabled(cfg),
+			"path":    telemetry.Path(root, cfg.Telemetry),
+			"events":  count,
 		}
-		fmt.Fprintf(stdout, "%s: %s (%s)\n", c.ID, status, c.Message)
+		if jsonOut {
+			return writeJSON(stdout, status)
+		}
+		fmt.Fprintf(stdout, "telemetry enabled=%t events=%d path=%s\n", status["enabled"], status["events"], status["path"])
+		return nil
+	case "tail":
+		limit := intFlag(args, "--limit", 20)
+		records, err := telemetry.Tail(root, cfg.Telemetry, limit)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return writeJSON(stdout, records)
+		}
+		for _, record := range records {
+			message := record.Reason
+			if message == "" {
+				message = record.AdditionalContext
+			}
+			fmt.Fprintf(stdout, "%s %s %s decision=%s empty=%t %s\n", record.Time, record.Event, record.Tool, record.Decision, record.OutputEmpty, message)
+		}
+		return nil
+	default:
+		return errors.New("usage: hookline telemetry status|tail [--limit N] [--json]")
 	}
-	if !ok {
-		return errors.New("doctor failed")
-	}
-	return nil
 }
 
 func hasFlag(args []string, flag string) bool {
@@ -190,10 +243,37 @@ func hasFlag(args []string, flag string) bool {
 	return false
 }
 
+func intFlag(args []string, flag string, fallback int) int {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			var value int
+			if _, err := fmt.Sscanf(args[i+1], "%d", &value); err == nil {
+				return value
+			}
+		}
+		if strings.HasPrefix(arg, flag+"=") {
+			var value int
+			if _, err := fmt.Sscanf(strings.TrimPrefix(arg, flag+"="), "%d", &value); err == nil {
+				return value
+			}
+		}
+	}
+	return fallback
+}
+
 func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func hookEventRoot(data []byte) string {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+	cwd, _ := raw["cwd"].(string)
+	return cwd
 }
 
 func fileExists(path string) bool {

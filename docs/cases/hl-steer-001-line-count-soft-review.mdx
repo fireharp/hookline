@@ -1,0 +1,62 @@
+---
+id: HL-STEER-001
+title: Line Count Soft Review
+description: Hookline reports a 501-line file as advisory evidence and the agent may keep it if the file is cohesive.
+date: 2026-06-10
+status: verified
+suite: smoke
+rule: 500-line soft review
+project: temporary smoke-bench repo
+command: go run ./cmd/hookline bench --suite smoke --json
+tags:
+  - hookline
+  - steering
+  - line-limit
+---
+
+# HL-STEER-001: Line Count Soft Review
+
+## Initial State
+
+- `cohesive-reference.md` exists with 501 lines.
+- Configured soft target is 500 lines.
+
+## Replay Messages
+
+| Actor | Message |
+| --- | --- |
+| agent | I created a cohesive reference file that is just over 500 lines. |
+| hookline | This is an advisory line-count finding; review split versus keep. |
+| agent | I reviewed the file and kept it together because it has one responsibility. |
+
+## Hook Evidence
+
+```json
+{
+  "event": "scan lines",
+  "input": {"path": "cohesive-reference.md", "lines": 501, "limit": 500},
+  "output": {
+    "findings": [
+      {
+        "path": "cohesive-reference.md",
+        "lines": 501,
+        "limit": 500,
+        "severity": "advisory"
+      }
+    ]
+  },
+  "effect": "advisory evidence; no Stop continuation"
+}
+```
+
+## Final State
+
+- `cohesive-reference.md` remains one file.
+- Stop evaluation returns allow.
+- The line-count finding remains visible as advisory evidence.
+
+## Verification
+
+- Line scan reports one advisory finding.
+- Stop does not request continuation.
+- Bench result: `resolved: true`, `status: pass`.

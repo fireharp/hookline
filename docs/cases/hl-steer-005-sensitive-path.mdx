@@ -1,0 +1,58 @@
+---
+id: HL-STEER-005
+title: Sensitive Path Steering
+description: Hookline adds coverage context for a billing-path change and the agent adds a test file.
+date: 2026-06-10
+status: verified
+suite: smoke
+rule: sensitive path coverage nudge
+project: temporary smoke-bench repo
+command: go run ./cmd/hookline bench --suite smoke --json
+tags:
+  - hookline
+  - steering
+  - codex-hooks
+  - sensitive-path
+---
+
+# HL-STEER-005: Sensitive Path
+
+## Initial State
+
+- `services/billing/pay.go` exists without a matching test change.
+
+## Replay Messages
+
+| Actor | Message |
+| --- | --- |
+| agent | I changed billing logic. |
+| hookline | Sensitive path touched; check auth, secrets, idempotency, and regression coverage. |
+| agent | I added `services/billing/pay_test.go`. |
+
+## Hook Evidence
+
+```json
+{
+  "event": "PostToolUse",
+  "input": {
+    "changed_files": ["services/billing/pay.go"],
+    "test_changed": false
+  },
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": "Sensitive path touched. Check idempotency, auth boundaries, secrets, and regression coverage."
+    }
+  },
+  "effect": "developer-context nudge"
+}
+```
+
+## Final State
+
+- `services/billing/pay_test.go` exists.
+
+## Verification
+
+- Sensitive-path rule clears when test file is present.
+- Bench result: `resolved: true`, `status: pass`.

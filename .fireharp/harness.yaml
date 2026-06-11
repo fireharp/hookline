@@ -1,7 +1,23 @@
+hooks:
+  enabled: true
+
+telemetry:
+  enabled: true
+  path: ".hookline/events.jsonl"
+
+recipes:
+  enabled:
+    - codex-hooks
+    - coherence
+    - secrets-gitleaks
+    - line-count
+    - agent-steering
+
 limits:
   file_line_limit: 500
   new_file_line_limit: 300
   large_diff_added: 700
+  split_review_line_limit: 2000
 
 secrets:
   env_file: ".env"

@@ -10,17 +10,35 @@ import (
 )
 
 type Config struct {
-	Limits         LimitsConfig  `yaml:"limits"`
-	Secrets        SecretsConfig `yaml:"secrets"`
-	DangerousShell []string      `yaml:"dangerous_shell"`
-	SensitivePaths []string      `yaml:"sensitive_paths"`
-	SkillTriggers  []SkillRule   `yaml:"skill_triggers"`
+	Hooks          HooksConfig     `yaml:"hooks"`
+	Telemetry      TelemetryConfig `yaml:"telemetry"`
+	Recipes        RecipesConfig   `yaml:"recipes"`
+	Limits         LimitsConfig    `yaml:"limits"`
+	Secrets        SecretsConfig   `yaml:"secrets"`
+	DangerousShell []string        `yaml:"dangerous_shell"`
+	SensitivePaths []string        `yaml:"sensitive_paths"`
+	SkillTriggers  []SkillRule     `yaml:"skill_triggers"`
+}
+
+type HooksConfig struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+type TelemetryConfig struct {
+	Enabled *bool  `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+type RecipesConfig struct {
+	Enabled []string `yaml:"enabled"`
+	Paths   []string `yaml:"paths"`
 }
 
 type LimitsConfig struct {
-	FileLineLimit    int `yaml:"file_line_limit"`
-	NewFileLineLimit int `yaml:"new_file_line_limit"`
-	LargeDiffAdded   int `yaml:"large_diff_added"`
+	FileLineLimit        int `yaml:"file_line_limit"`
+	NewFileLineLimit     int `yaml:"new_file_line_limit"`
+	LargeDiffAdded       int `yaml:"large_diff_added"`
+	SplitReviewLineLimit int `yaml:"split_review_line_limit"`
 }
 
 type SecretsConfig struct {
@@ -40,12 +58,22 @@ type SkillRule struct {
 }
 
 func Default() Config {
+	enabled := true
+	telemetryEnabled := true
 	runGitleaks := true
 	return Config{
+		Hooks: HooksConfig{
+			Enabled: &enabled,
+		},
+		Telemetry: TelemetryConfig{
+			Enabled: &telemetryEnabled,
+			Path:    ".hookline/events.jsonl",
+		},
 		Limits: LimitsConfig{
-			FileLineLimit:    500,
-			NewFileLineLimit: 300,
-			LargeDiffAdded:   700,
+			FileLineLimit:        500,
+			NewFileLineLimit:     300,
+			LargeDiffAdded:       700,
+			SplitReviewLineLimit: 2000,
 		},
 		Secrets: SecretsConfig{
 			EnvFile:        ".env",
@@ -92,6 +120,14 @@ func Load(root string) (Config, error) {
 	return cfg, nil
 }
 
+func HooksEnabled(cfg Config) bool {
+	return cfg.Hooks.Enabled == nil || *cfg.Hooks.Enabled
+}
+
+func TelemetryEnabled(cfg Config) bool {
+	return cfg.Telemetry.Enabled == nil || *cfg.Telemetry.Enabled
+}
+
 func FindRoot(start string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = start
@@ -123,6 +159,21 @@ func mergeFile(cfg *Config, path string) error {
 }
 
 func merge(dst *Config, src Config) {
+	if src.Hooks.Enabled != nil {
+		dst.Hooks.Enabled = src.Hooks.Enabled
+	}
+	if src.Telemetry.Enabled != nil {
+		dst.Telemetry.Enabled = src.Telemetry.Enabled
+	}
+	if src.Telemetry.Path != "" {
+		dst.Telemetry.Path = src.Telemetry.Path
+	}
+	if len(src.Recipes.Enabled) > 0 {
+		dst.Recipes.Enabled = src.Recipes.Enabled
+	}
+	if len(src.Recipes.Paths) > 0 {
+		dst.Recipes.Paths = src.Recipes.Paths
+	}
 	if src.Limits.FileLineLimit != 0 {
 		dst.Limits.FileLineLimit = src.Limits.FileLineLimit
 	}
@@ -131,6 +182,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.Limits.LargeDiffAdded != 0 {
 		dst.Limits.LargeDiffAdded = src.Limits.LargeDiffAdded
+	}
+	if src.Limits.SplitReviewLineLimit != 0 {
+		dst.Limits.SplitReviewLineLimit = src.Limits.SplitReviewLineLimit
 	}
 	if src.Secrets.EnvFile != "" {
 		dst.Secrets.EnvFile = src.Secrets.EnvFile

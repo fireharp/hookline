@@ -1,0 +1,67 @@
+package main
+
+func defaultGitleaksConfig() string {
+	return `title = "hookline gitleaks config"
+# Managed by hookline. Rerun hookline init to update.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "hookline-tailscale-magicdns"
+description = "Tailscale MagicDNS hostname"
+regex = '''[A-Za-z0-9][A-Za-z0-9-]*\.[A-Za-z0-9-]+\.ts\.net'''
+keywords = [".ts.net"]
+tags = ["hostname", "tailscale"]
+
+[[rules.allowlists]]
+description = "Allow documented placeholder hostnames"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''\.env\.example$''',
+  '''^docs/''',
+]
+
+[[rules]]
+id = "hookline-apple-default-hostname"
+description = "Default Apple hostname shape"
+regex = '''(?i)\b[a-z][a-z0-9]+(?:-|s-)macbook(?:-pro|-air)?\b'''
+tags = ["hostname", "apple"]
+
+[[rules.allowlists]]
+description = "Allow documented placeholder hostnames"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''\.env\.example$''',
+  '''^docs/''',
+]
+
+[[rules]]
+id = "hookline-public-tunnels"
+description = "Public dev tunnel hostnames"
+regex = '''[A-Za-z0-9-]+\.(?:ngrok-free\.app|ngrok\.io|trycloudflare\.com|loca\.lt|serveo\.net|lhr\.life)'''
+tags = ["hostname", "tunnel"]
+
+[[rules.allowlists]]
+description = "Allow documented placeholder tunnel hostnames"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''\.env\.example$''',
+  '''^docs/''',
+]
+
+[[rules]]
+id = "hookline-rfc1918-in-url"
+description = "URL pointing at an RFC1918 or link-local address"
+regex = '''https?://(?:10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|169\.254\.)\d+(?:\.\d+){0,2}(?::\d+)?'''
+tags = ["network", "private-ip"]
+
+[[rules.allowlists]]
+description = "Allow documented placeholder private URLs"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''\.env\.example$''',
+  '''^docs/''',
+]
+`
+}

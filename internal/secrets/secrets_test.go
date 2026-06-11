@@ -13,10 +13,11 @@ import (
 func TestEnvLeaksRedactsLocalValues(t *testing.T) {
 	root := t.TempDir()
 	mustGit(t, root, "init")
-	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("LOCAL_VALUE=abcdef123456\n"), 0o600); err != nil {
+	value := "/Users/myuser/Work/private-client"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("LOCAL_PROJECT_ROOT="+value+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("value=abcdef123456\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("project_root="+value+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustGit(t, root, "add", "README.md")
@@ -27,7 +28,7 @@ func TestEnvLeaksRedactsLocalValues(t *testing.T) {
 	if len(leaks) != 1 {
 		t.Fatalf("expected one leak, got %#v", leaks)
 	}
-	if strings.Contains(leaks[0].Redacted, "abcdef123456") {
+	if strings.Contains(leaks[0].Redacted, value) {
 		t.Fatalf("redacted output leaked value: %s", leaks[0].Redacted)
 	}
 }

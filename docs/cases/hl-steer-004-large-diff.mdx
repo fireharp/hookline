@@ -1,0 +1,60 @@
+---
+id: HL-STEER-004
+title: Large Diff Steering
+description: Hookline turns a 701-line rewrite into continuation feedback and the agent reduces the diff to a focused edit.
+date: 2026-06-10
+status: verified
+suite: smoke
+rule: large diff continuation feedback
+project: temporary smoke-bench repo
+command: go run ./cmd/hookline bench --suite smoke --json
+tags:
+  - hookline
+  - steering
+  - codex-hooks
+  - large-diff
+---
+
+# HL-STEER-004: Large Diff
+
+## Initial State
+
+- `notes.md` is committed with one starter line.
+- Agent edit adds 701 lines.
+
+## Replay Messages
+
+| Actor | Message |
+| --- | --- |
+| agent | I produced a broad 701-line rewrite. |
+| hookline | Large diff detected; review for accidental rewrites before stopping. |
+| agent | I reduced the change to a focused 20-line edit. |
+
+## Hook Evidence
+
+```json
+{
+  "event": "PostToolUse",
+  "input": {
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "added_lines": 701
+  },
+  "output": {
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": "Large diff detected (701 added lines). Review for accidental rewrites before stopping."
+    }
+  },
+  "effect": "additional context; Codex continues with steering visible"
+}
+```
+
+## Final State
+
+- `notes.md` diff is reduced to 20 added lines.
+
+## Verification
+
+- `PostToolUse` no longer returns the large-diff rule.
+- Bench result: `resolved: true`, `status: pass`.
