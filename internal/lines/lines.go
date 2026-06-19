@@ -40,6 +40,9 @@ func Scan(root string, limits config.LimitsConfig) (Result, error) {
 			continue
 		}
 		n, err := countLines(filepath.Join(root, rel))
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			return Result{}, err
 		}
@@ -120,12 +123,29 @@ func countLines(path string) (int, error) {
 }
 
 func scannable(path string) bool {
+	if generatedFile(path) {
+		return false
+	}
 	switch filepath.Ext(path) {
 	case ".go", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".md", ".mdx", ".sh", ".yaml", ".yml", ".toml", ".json":
 		return true
 	default:
 		return false
 	}
+}
+
+func generatedFile(path string) bool {
+	base := filepath.Base(path)
+	switch base {
+	case "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb",
+		"Cargo.lock", "go.sum", "poetry.lock", "Pipfile.lock", "composer.lock",
+		"Gemfile.lock", "skills-lock.json":
+		return true
+	}
+	return strings.HasSuffix(base, ".min.js") ||
+		strings.HasSuffix(base, ".min.css") ||
+		strings.HasSuffix(base, ".generated.go") ||
+		strings.HasSuffix(base, ".pb.go")
 }
 
 func skipDir(name string) bool {

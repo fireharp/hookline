@@ -9,6 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	runtimeDir        = ".harness"
+	projectConfigFile = "harness.yaml"
+)
+
 type Config struct {
 	Hooks          HooksConfig     `yaml:"hooks"`
 	Telemetry      TelemetryConfig `yaml:"telemetry"`
@@ -67,7 +72,7 @@ func Default() Config {
 		},
 		Telemetry: TelemetryConfig{
 			Enabled: &telemetryEnabled,
-			Path:    ".hookline/events.jsonl",
+			Path:    ".harness/events.jsonl",
 		},
 		Limits: LimitsConfig{
 			FileLineLimit:        500,
@@ -114,10 +119,31 @@ func Default() Config {
 func Load(root string) (Config, error) {
 	cfg := Default()
 	if home, err := os.UserHomeDir(); err == nil {
-		_ = mergeFile(&cfg, filepath.Join(home, ".fireharp", "hookline.yaml"))
+		_ = mergeFile(&cfg, UserConfigPath(home))
 	}
-	_ = mergeFile(&cfg, filepath.Join(root, ".fireharp", "harness.yaml"))
+	_ = mergeFile(&cfg, LegacyProjectConfigPath(root))
+	_ = mergeFile(&cfg, ProjectConfigPath(root))
 	return cfg, nil
+}
+
+func ProjectConfigPath(root string) string {
+	return filepath.Join(root, projectConfigFile)
+}
+
+func LegacyProjectConfigPath(root string) string {
+	return filepath.Join(root, runtimeDir, projectConfigFile)
+}
+
+func UserConfigPath(home string) string {
+	return filepath.Join(home, runtimeDir, "hookline.yaml")
+}
+
+func ProjectRecipesPath(root string) string {
+	return filepath.Join(root, runtimeDir, "recipes")
+}
+
+func UserRecipesPath(home string) string {
+	return filepath.Join(home, runtimeDir, "recipes")
 }
 
 func HooksEnabled(cfg Config) bool {

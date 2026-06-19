@@ -158,3 +158,35 @@ func stopContinuationEvidence() Evidence {
 		Verification: []string{"Stop does not request continuation after the correction"},
 	}
 }
+
+func rtkExplicitProxyEvidence() Evidence {
+	return Evidence{
+		CaseID:  "HL-RECIPE-001",
+		Project: "temporary rtk recipe demo repo",
+		Fixture: "project-local .rtk/filters.toml plus fake rtk binary",
+		Rule:    "RTK explicit command proxy recipe",
+		InitialState: []string{
+			"rtk-explicit-proxy is not part of the default Hookline recipe set.",
+			"demo repo has a project-local managed .rtk/filters.toml.",
+			"fake rtk binary is available only on the demo PATH.",
+		},
+		Communication: []Message{
+			{Actor: "user", Message: "I want RTK as an optional recipe, not global mode."},
+			{Actor: "hookline", Message: "Use explicit RTK command wrappers; do not run rtk init -g."},
+			{Actor: "agent", Message: "I ran rtk git status and rtk test cargo test explicitly."},
+		},
+		Hook: HookEvidence{
+			Event:  "recipe demo",
+			Input:  `{"recipe":"rtk-explicit-proxy","commands":["rtk git status","rtk test cargo test"]}`,
+			Output: `{"git_status":"compact git status","test":"compact test output"}`,
+			Effect: "project-local recipe demo; no global agent hook rewrite",
+		},
+		FinalState: []string{
+			"explicit RTK commands return compact fixture output.",
+			"HOME contains no .codex or .claude directories.",
+			"rtk-explicit-proxy is removed from project config.",
+			"managed .rtk/filters.toml can be removed.",
+		},
+		Verification: []string{"fake RTK command output matched", "global agent directories were absent", "recipe config entry was removable", "managed filters file was removable"},
+	}
+}

@@ -2,10 +2,8 @@ package recipes
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,27 +15,44 @@ import (
 )
 
 const (
-	Coherence       = "coherence"
-	SecretsGitleaks = "secrets-gitleaks"
-	LineCount       = "line-count"
-	CodexHooks      = "codex-hooks"
-	AgentSteering   = "agent-steering"
+	Coherence        = "coherence"
+	SecretsGitleaks  = "secrets-gitleaks"
+	LineCount        = "line-count"
+	CodexHooks       = "codex-hooks"
+	AgentSteering    = "agent-steering"
+	RTKExplicitProxy = "rtk-explicit-proxy"
 )
 
-//go:embed bundled/*.yaml
-var bundled embed.FS
-
 type Manifest struct {
-	ID          string               `yaml:"id" json:"id"`
-	Title       string               `yaml:"title" json:"title,omitempty"`
-	Description string               `yaml:"description" json:"description,omitempty"`
-	Surfaces    []string             `yaml:"surfaces" json:"surfaces,omitempty"`
-	Commands    map[string][]Command `yaml:"commands" json:"commands,omitempty"`
-	Source      string               `yaml:"-" json:"source,omitempty"`
+	ID           string               `yaml:"id" json:"id"`
+	Title        string               `yaml:"title" json:"title,omitempty"`
+	Description  string               `yaml:"description" json:"description,omitempty"`
+	Surfaces     []string             `yaml:"surfaces" json:"surfaces,omitempty"`
+	Commands     map[string][]Command `yaml:"commands" json:"commands,omitempty"`
+	CodexHooks   []CodexHook          `yaml:"codex_hooks" json:"codex_hooks,omitempty"`
+	ManagedFiles []ManagedFile        `yaml:"managed_files" json:"managed_files,omitempty"`
+	Source       string               `yaml:"-" json:"source,omitempty"`
 }
 
 type Command struct {
 	Args []string `yaml:"args" json:"args"`
+}
+
+type CodexHook struct {
+	Event          string `yaml:"event" json:"event"`
+	Matcher        string `yaml:"matcher,omitempty" json:"matcher,omitempty"`
+	Type           string `yaml:"type" json:"type"`
+	Command        string `yaml:"command" json:"command"`
+	CommandWindows string `yaml:"command_windows,omitempty" json:"command_windows,omitempty"`
+	Timeout        int    `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	StatusMessage  string `yaml:"status_message,omitempty" json:"status_message,omitempty"`
+}
+
+type ManagedFile struct {
+	Path    string `yaml:"path" json:"path"`
+	Mode    string `yaml:"mode" json:"mode,omitempty"`
+	Action  string `yaml:"action" json:"action,omitempty"`
+	Content string `yaml:"content" json:"-"`
 }
 
 type Registry struct {
@@ -71,7 +86,7 @@ func StandardRecipeIDs() []string {
 
 func Load(root string, cfg config.Config) (Registry, error) {
 	reg := Registry{byID: map[string]Manifest{}, enabled: map[string]bool{}}
-	if err := loadBundled(&reg); err != nil {
+	if err := reg.loadStandard(); err != nil {
 		return Registry{}, err
 	}
 	for _, path := range defaultRecipePaths(root) {
@@ -187,28 +202,12 @@ func RunCommands(ctx context.Context, root string, m Manifest, surface string) [
 	return results
 }
 
-func loadBundled(reg *Registry) error {
-	return fs.WalkDir(bundled, "bundled", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".yaml") {
-			return nil
-		}
-		data, err := bundled.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return reg.loadBytes(data, path)
-	})
-}
-
 func defaultRecipePaths(root string) []string {
 	var paths []string
 	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, ".fireharp", "hookline", "recipes"))
+		paths = append(paths, config.UserRecipesPath(home))
 	}
-	paths = append(paths, filepath.Join(root, ".fireharp", "hookline", "recipes"))
+	paths = append(paths, config.ProjectRecipesPath(root))
 	return paths
 }
 
@@ -250,6 +249,15 @@ func (r *Registry) loadFile(path string) error {
 	return r.loadBytes(data, path)
 }
 
+func (r *Registry) loadStandard() error {
+	for _, manifest := range standardRecipeManifests {
+		if err := r.loadBytes([]byte(manifest), "builtin"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Registry) loadBytes(data []byte, source string) error {
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
@@ -267,6 +275,40 @@ func (r *Registry) loadBytes(data []byte, source string) error {
 		if !contains(m.Surfaces, surface) {
 			m.Surfaces = append(m.Surfaces, surface)
 		}
+	}
+	for i, hook := range m.CodexHooks {
+		if strings.TrimSpace(hook.Event) == "" {
+			return fmt.Errorf("%s: codex_hooks[%d] event is required", source, i)
+		}
+		if strings.TrimSpace(hook.Command) == "" {
+			return fmt.Errorf("%s: codex_hooks[%d] command is required", source, i)
+		}
+		if strings.TrimSpace(hook.Type) == "" {
+			hook.Type = "command"
+		}
+		if hook.Type != "command" {
+			return fmt.Errorf("%s: codex_hooks[%d] type %q is not supported", source, i, hook.Type)
+		}
+		if hook.Timeout < 0 {
+			return fmt.Errorf("%s: codex_hooks[%d] timeout must be non-negative", source, i)
+		}
+		m.CodexHooks[i] = hook
+	}
+	if len(m.CodexHooks) > 0 && !contains(m.Surfaces, "hook") {
+		m.Surfaces = append(m.Surfaces, "hook")
+	}
+	for i, file := range m.ManagedFiles {
+		if strings.TrimSpace(file.Path) == "" {
+			return fmt.Errorf("%s: managed_files[%d] path is required", source, i)
+		}
+		if filepath.IsAbs(file.Path) {
+			return fmt.Errorf("%s: managed_files[%d] path must be relative", source, i)
+		}
+		clean := filepath.Clean(file.Path)
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("%s: managed_files[%d] path must stay inside the project", source, i)
+		}
+		m.ManagedFiles[i].Path = clean
 	}
 	sort.Strings(m.Surfaces)
 	m.Source = source

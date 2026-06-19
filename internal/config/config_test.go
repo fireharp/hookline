@@ -11,18 +11,18 @@ func TestLoadMergesDefaultsUserAndProjectConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", home)
 
-	userDir := filepath.Join(home, ".fireharp")
-	projectDir := filepath.Join(root, ".fireharp")
+	userDir := filepath.Dir(UserConfigPath(home))
+	projectDir := filepath.Dir(ProjectConfigPath(root))
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(userDir, "hookline.yaml"), []byte("telemetry:\n  path: custom/events.jsonl\nlimits:\n  file_line_limit: 450\nsecrets:\n  min_value_length: 10\n"), 0o644); err != nil {
+	if err := os.WriteFile(UserConfigPath(home), []byte("telemetry:\n  path: custom/events.jsonl\nlimits:\n  file_line_limit: 450\nsecrets:\n  min_value_length: 10\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "harness.yaml"), []byte("hooks:\n  enabled: false\nlimits:\n  file_line_limit: 321\n  split_review_line_limit: 1500\n"), 0o644); err != nil {
+	if err := os.WriteFile(ProjectConfigPath(root), []byte("hooks:\n  enabled: false\nlimits:\n  file_line_limit: 321\n  split_review_line_limit: 1500\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,10 +57,10 @@ func TestLoadMergesRecipeConfig(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(root, ".fireharp"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ProjectConfigPath(root)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".fireharp", "harness.yaml"), []byte("recipes:\n  enabled:\n    - line-count\n  paths:\n    - .fireharp/hookline/recipes\n"), 0o644); err != nil {
+	if err := os.WriteFile(ProjectConfigPath(root), []byte("recipes:\n  enabled:\n    - line-count\n  paths:\n    - .harness/recipes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(root)
@@ -70,7 +70,29 @@ func TestLoadMergesRecipeConfig(t *testing.T) {
 	if len(cfg.Recipes.Enabled) != 1 || cfg.Recipes.Enabled[0] != "line-count" {
 		t.Fatalf("expected enabled line-count recipe, got %#v", cfg.Recipes.Enabled)
 	}
-	if len(cfg.Recipes.Paths) != 1 || cfg.Recipes.Paths[0] != ".fireharp/hookline/recipes" {
+	if len(cfg.Recipes.Paths) != 1 || cfg.Recipes.Paths[0] != ".harness/recipes" {
 		t.Fatalf("expected recipe path, got %#v", cfg.Recipes.Paths)
+	}
+}
+
+func TestRootHarnessOverridesLegacyHarnessDirConfig(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Dir(LegacyProjectConfigPath(root)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LegacyProjectConfigPath(root), []byte("limits:\n  file_line_limit: 450\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ProjectConfigPath(root), []byte("limits:\n  file_line_limit: 321\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.FileLineLimit != 321 {
+		t.Fatalf("expected root harness.yaml to override legacy config, got %d", cfg.Limits.FileLineLimit)
 	}
 }

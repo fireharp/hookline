@@ -23,7 +23,7 @@ func (s Store) Acquire(event types.Event, input []byte, source string, ttl time.
 	if ttl <= 0 {
 		ttl = 2 * time.Minute
 	}
-	dir := filepath.Join(s.Root, ".hookline", "locks")
+	dir := filepath.Join(s.Root, ".harness", "locks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, err
 	}

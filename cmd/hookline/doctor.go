@@ -63,7 +63,7 @@ func doctor(ctx context.Context, stdout io.Writer, root string, cfg config.Confi
 	}
 	checks := []doctorCheck{
 		{ID: "root", OK: root != "", Message: root},
-		{ID: "project-config", OK: true, Message: filepath.Join(root, ".fireharp", "harness.yaml")},
+		{ID: "project-config", OK: true, Message: config.ProjectConfigPath(root)},
 		{ID: "enabled-recipes", OK: true, Message: strings.Join(registry.EnabledIDs(), ", ")},
 		{ID: "telemetry", OK: true, Message: telemetry.Path(root, cfg.Telemetry)},
 		{ID: "active-snoozes", OK: true, Message: activeSnoozeMessage(root)},
@@ -139,6 +139,14 @@ func doctorRecipe(ctx context.Context, root string, cfg config.Config, manifest 
 			OK:          len(cfg.DangerousShell)+len(cfg.SensitivePaths)+len(cfg.SkillTriggers) > 0,
 			Message:     fmt.Sprintf("dangerous_shell=%d sensitive_paths=%d skill_triggers=%d", len(cfg.DangerousShell), len(cfg.SensitivePaths), len(cfg.SkillTriggers)),
 			Remediation: "configure at least one steering rule",
+		})
+	case recipes.RTKExplicitProxy:
+		checks = append(checks, doctorCheck{
+			ID:          "rtk-filters",
+			RecipeID:    manifest.ID,
+			OK:          fileExists(filepath.Join(root, ".rtk", "filters.toml")),
+			Message:     ".rtk/filters.toml",
+			Remediation: "run hookline recipe enable rtk-explicit-proxy",
 		})
 	}
 	for _, result := range recipes.RunCommands(ctx, root, manifest, "doctor") {
@@ -258,6 +266,8 @@ func installHint(recipeID string) string {
 		return "install coherence and rerun doctor"
 	case recipes.SecretsGitleaks:
 		return "install gitleaks, for example with brew install gitleaks"
+	case recipes.RTKExplicitProxy:
+		return "install rtk, then use explicit commands such as rtk git status; Hookline does not run rtk init -g"
 	default:
 		return ""
 	}

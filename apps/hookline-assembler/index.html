@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hookline Assembler</title>
+    <meta
+      name="description"
+      content="Assemble a Hookline setup by choosing hook events, recipes, custom commands, and verification steps."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar" aria-label="Primary">
+        <a class="brand" href="#builder" aria-label="Hookline Assembler home">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Hookline Assembler</span>
+        </a>
+        <nav class="nav-links" aria-label="Page sections">
+          <a href="#builder">Builder</a>
+          <a href="#setup">Setup</a>
+          <a href="#verify">Verify</a>
+        </nav>
+      </header>
+
+      <section class="line-board editor-board" id="builder" aria-label="Hookline assembly editor">
+        <div class="board-topline">
+          <div class="board-title">
+            <span>Assembly map</span>
+            <strong>Edit the run directly here.</strong>
+          </div>
+          <fieldset class="segmented scope-segmented" aria-label="Installation scope">
+            <legend>Install scope</legend>
+            <label>
+              <input type="radio" name="scope" value="project" checked />
+              <span>Project</span>
+            </label>
+            <label>
+              <input type="radio" name="scope" value="user" />
+              <span>User</span>
+            </label>
+            <label>
+              <input type="radio" name="scope" value="both" />
+              <span>Both</span>
+            </label>
+          </fieldset>
+          <output id="selected-count">0 recipes run</output>
+        </div>
+        <div class="line-stage" id="line-stage"></div>
+        <div class="board-footer">
+          <span id="surface-summary">Project scope</span>
+          <span id="custom-summary">No local command</span>
+        </div>
+      </section>
+
+      <section class="detail-grid" aria-label="Assembly details">
+        <section class="panel custom-panel">
+          <div class="section-heading">
+            <h2>Private command details</h2>
+            <p>Fill this in when the map includes the private command recipe.</p>
+          </div>
+
+          <label class="toggle-row">
+            <input id="custom-enabled" type="checkbox" />
+            <span>
+              <strong>Run my command</strong>
+              <small>Attach a command to hook, doctor, or pre-commit surfaces.</small>
+            </span>
+          </label>
+
+          <div class="form-stack">
+            <label>
+              <span>Recipe id</span>
+              <input id="custom-id" type="text" value="personal-binary" autocomplete="off" />
+            </label>
+            <label>
+              <span>Binary path</span>
+              <input
+                id="custom-path"
+                type="text"
+                value="/Users/me/bin/personal-check"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              <span>Arguments</span>
+              <input id="custom-args" type="text" value="--hook codex" autocomplete="off" />
+            </label>
+          </div>
+
+          <fieldset class="surface-picks" aria-label="Custom command surfaces">
+            <legend>Run on</legend>
+            <label><input type="checkbox" name="customSurface" value="hook" checked /> Hook events</label>
+            <label><input type="checkbox" name="customSurface" value="doctor" checked /> Doctor</label>
+            <label><input type="checkbox" name="customSurface" value="precommit" /> Pre-commit</label>
+          </fieldset>
+          <p class="inline-error" id="custom-error" role="alert" hidden></p>
+        </section>
+
+        <section class="panel setup-panel" id="setup">
+          <div class="section-heading">
+            <h2>Install command</h2>
+            <p>This is the command you run after the assembly looks right.</p>
+          </div>
+          <div class="code-block">
+            <div class="code-toolbar">
+              <span>setup.sh</span>
+              <button class="text-button" type="button" data-copy="setup-code">Copy</button>
+            </div>
+            <pre id="setup-code"></pre>
+          </div>
+        </section>
+
+        <section class="panel manifest-panel">
+          <div class="section-heading">
+            <h2>Manifest</h2>
+            <p>The private command becomes a recipe manifest next to built-ins.</p>
+          </div>
+          <div class="code-block">
+            <div class="code-toolbar">
+              <span>personal-binary.yaml</span>
+              <button class="text-button" type="button" data-copy="manifest-code">Copy</button>
+            </div>
+            <pre id="manifest-code"></pre>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel verify-panel" id="verify">
+        <div class="verify-copy">
+          <div class="section-heading">
+            <h2>Doctor proof</h2>
+            <p>Doctor should prove config, hook files, external commands, and local state.</p>
+          </div>
+          <button class="button button-primary" type="button" id="run-verify">Run verification</button>
+        </div>
+        <div class="checks" id="checks" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="./data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

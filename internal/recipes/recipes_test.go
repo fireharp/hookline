@@ -9,7 +9,38 @@ import (
 	"github.com/fireharp/hookline/internal/config"
 )
 
-func TestLoadBundledRecipesDisabledByDefault(t *testing.T) {
+func TestLoadProjectRecipesDisabledByDefault(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("HOME", home)
+	writeRecipe(t, root, "line-count", "id: line-count\ntitle: Line Count\nsurfaces: [scan]\n")
+	writeRecipe(t, root, "rtk-explicit-proxy", "id: rtk-explicit-proxy\ntitle: RTK Explicit Proxy\nmanaged_files:\n  - path: .rtk/filters.toml\n    content: |\n      # Managed by hookline\n")
+
+	registry, err := Load(root, config.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get(LineCount); !ok {
+		t.Fatal("expected project line-count recipe")
+	}
+	if registry.AnyEnabled() {
+		t.Fatalf("expected no enabled recipes by default, got %#v", registry.EnabledIDs())
+	}
+	if _, ok := registry.Get(RTKExplicitProxy); !ok {
+		t.Fatal("expected project rtk-explicit-proxy recipe")
+	}
+	rtk, _ := registry.Get(RTKExplicitProxy)
+	if len(rtk.ManagedFiles) != 1 || rtk.ManagedFiles[0].Path != filepath.Join(".rtk", "filters.toml") {
+		t.Fatalf("expected RTK managed file from manifest, got %#v", rtk.ManagedFiles)
+	}
+	for _, id := range StandardRecipeIDs() {
+		if id == RTKExplicitProxy {
+			t.Fatal("expected rtk-explicit-proxy to stay out of standard recipes")
+		}
+	}
+}
+
+func TestLoadIncludesStandardRecipesWithoutProjectPack(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
@@ -18,19 +49,32 @@ func TestLoadBundledRecipesDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := registry.Get(LineCount); !ok {
-		t.Fatal("expected bundled line-count recipe")
+	for _, id := range StandardRecipeIDs() {
+		if _, ok := registry.Get(id); !ok {
+			t.Fatalf("expected standard recipe %s", id)
+		}
 	}
 	if registry.AnyEnabled() {
-		t.Fatalf("expected no enabled recipes by default, got %#v", registry.EnabledIDs())
+		t.Fatalf("expected standard recipes loaded but disabled, got %#v", registry.EnabledIDs())
 	}
 }
 
-func TestLoadProjectRecipeOverridesBundledRecipe(t *testing.T) {
+func writeRecipe(t *testing.T, root, id, manifest string) {
+	t.Helper()
+	dir := config.ProjectRecipesPath(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadProjectRecipeOverridesUserRecipe(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(root, ".fireharp", "hookline", "recipes")
+	dir := config.ProjectRecipesPath(root)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +103,7 @@ func TestLoadMalformedManifestFails(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(root, ".fireharp", "hookline", "recipes")
+	dir := config.ProjectRecipesPath(root)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +112,22 @@ func TestLoadMalformedManifestFails(t *testing.T) {
 	}
 	if _, err := Load(root, config.Default()); err == nil {
 		t.Fatal("expected malformed recipe to fail")
+	}
+}
+
+func TestLoadRejectsUnsafeManagedFilePath(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := config.ProjectRecipesPath(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("id: bad\nmanaged_files:\n  - path: ../outside\n    content: nope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(root, config.Default()); err == nil {
+		t.Fatal("expected unsafe managed file path to fail")
 	}
 }
 

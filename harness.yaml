@@ -3,7 +3,7 @@ hooks:
 
 telemetry:
   enabled: true
-  path: ".hookline/events.jsonl"
+  path: ".harness/events.jsonl"
 
 recipes:
   enabled:

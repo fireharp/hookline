@@ -154,7 +154,7 @@ func Count(root string, cfg config.TelemetryConfig) (int, error) {
 func Path(root string, cfg config.TelemetryConfig) string {
 	path := cfg.Path
 	if path == "" {
-		path = ".hookline/events.jsonl"
+		path = ".harness/events.jsonl"
 	}
 	if filepath.IsAbs(path) {
 		return path

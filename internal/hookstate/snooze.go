@@ -148,7 +148,7 @@ func expired(value string, now time.Time) bool {
 }
 
 func (s Store) snoozePath() string {
-	return filepath.Join(s.Root, ".hookline", "snoozes.jsonl")
+	return filepath.Join(s.Root, ".harness", "snoozes.jsonl")
 }
 
 func appendJSONL(path string, value any) error {

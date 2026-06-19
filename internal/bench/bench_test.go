@@ -18,8 +18,8 @@ func TestSmokeBenchPasses(t *testing.T) {
 	if !result.Pass {
 		t.Fatalf("expected pass, got %#v", result)
 	}
-	if len(result.Scenarios) != 6 {
-		t.Fatalf("expected six scenarios, got %d", len(result.Scenarios))
+	if len(result.Scenarios) != 7 {
+		t.Fatalf("expected seven scenarios, got %d", len(result.Scenarios))
 	}
 	for _, scenario := range result.Scenarios {
 		if !scenario.Resolved {

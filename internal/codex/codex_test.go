@@ -162,6 +162,42 @@ func TestDefaultConfigHasNoHookBehavior(t *testing.T) {
 	}
 }
 
+func TestMergeOutputsCombinesPlainTextAndPolicyContext(t *testing.T) {
+	policy := []byte(`{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"policy"}}`)
+	merged, err := MergeOutputs("PostToolUse", []byte("imported"), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(merged, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	hookOutput := decoded["hookSpecificOutput"].(map[string]any)
+	context := hookOutput["additionalContext"].(string)
+	if !strings.Contains(context, "imported") || !strings.Contains(context, "policy") {
+		t.Fatalf("expected merged context, got %#v", hookOutput)
+	}
+}
+
+func TestMergeOutputsPreservesDeny(t *testing.T) {
+	imported := []byte(`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"nope"}}`)
+	merged, err := MergeOutputs("PreToolUse", imported, []byte("extra"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(merged, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	hookOutput := decoded["hookSpecificOutput"].(map[string]any)
+	if hookOutput["permissionDecision"] != "deny" {
+		t.Fatalf("expected deny, got %#v", hookOutput)
+	}
+	if !strings.Contains(hookOutput["permissionDecisionReason"].(string), "extra") {
+		t.Fatalf("expected extra context in reason, got %#v", hookOutput)
+	}
+}
+
 func testConfig(ids ...string) config.Config {
 	cfg := config.Default()
 	cfg.Recipes.Enabled = ids

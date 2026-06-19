@@ -6,7 +6,7 @@ Hookline is a Go CLI. `cmd/hookline` owns command dispatch; internal packages
 keep behavior small and testable: `config` loads defaults plus user/project
 YAML, `codex` translates Codex hook JSON, `engine` evaluates policy decisions,
 `lines` scans file sizes, `secrets` checks staged leaks, and `bench` runs smoke
-scenarios. Project policy lives in `.fireharp/harness.yaml`; Codex hook wiring
+scenarios. Project policy lives in `harness.yaml`; Codex hook wiring
 lives in `.codex/hooks.json`.
 
 ## Build, Test, and Development Commands

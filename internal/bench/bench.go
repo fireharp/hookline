@@ -68,6 +68,7 @@ func Run(ctx context.Context, suite string, cfg config.Config) (Result, error) {
 		largeDiff,
 		sensitivePath,
 		stopContinuation,
+		rtkExplicitProxy,
 	}
 	for _, check := range checks {
 		scenario := check(ctx, cfg)

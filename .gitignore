@@ -2,7 +2,8 @@ LOCAL.md
 .agents/tasks/init.md
 .env
 .coherence/
-.hookline/
+.harness/
 bin/
 .DS_Store
 repomix*.*
+.hookline/

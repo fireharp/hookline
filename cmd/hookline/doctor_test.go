@@ -38,6 +38,7 @@ func TestDoctorPassesWithEnabledRecipeSetup(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Recipes.Enabled = recipes.StandardRecipeIDs()
+	writeRecipePack(t, root, cfg.Recipes.Enabled...)
 	registry, err := recipes.Load(root, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +71,7 @@ func TestDoctorFailsMissingHooksPathForPrecommitRecipe(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Recipes.Enabled = []string{recipes.SecretsGitleaks}
+	writeRecipePack(t, root, cfg.Recipes.Enabled...)
 	registry, err := recipes.Load(root, cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fireharp/hookline/internal/bench"
 	"github.com/fireharp/hookline/internal/codex"
+	"github.com/fireharp/hookline/internal/codexhooks"
 	"github.com/fireharp/hookline/internal/config"
 	"github.com/fireharp/hookline/internal/hookstate"
 	"github.com/fireharp/hookline/internal/lines"
@@ -97,15 +98,21 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 			return nil
 		}
+		imported := codexhooks.RunMatching(ctx, codexhooks.EnabledHooks(registry), event, data, root, stderr)
 		result, hookErr := codex.HandleEvent(ctx, event, &out, cfg, codex.Options{Root: root})
+		outputs := append(codexhooks.Outputs(imported), out.Bytes())
+		merged, err := codex.MergeOutputs(event.Event, outputs...)
+		if err != nil {
+			return err
+		}
 		meta.RuleID = result.Decision.RuleID
 		meta.Snoozed = result.Decision.Snoozed
 		meta.SnoozeScope = result.Decision.SnoozeScope
 		meta.SnoozePath = result.Decision.SnoozePath
-		if _, err := stdout.Write(out.Bytes()); err != nil {
+		if _, err := stdout.Write(merged); err != nil {
 			return err
 		}
-		if err := telemetry.Append(root, cfg, data, out.Bytes(), hookErr, time.Since(start), meta); err != nil {
+		if err := telemetry.Append(root, cfg, data, merged, hookErr, time.Since(start), meta); err != nil {
 			fmt.Fprintf(stderr, "hookline telemetry: %v\n", err)
 		}
 		return hookErr
@@ -118,7 +125,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return doctor(ctx, stdout, root, cfg, registry, opts)
 	case "recipe":
-		return recipeCommand(args[1:], stdout, registry)
+		return recipeCommand(args[1:], stdout, root, cfg, registry)
+	case "import":
+		return importCommand(args[1:], stdout, root)
 	case "scan":
 		return scan(ctx, args[1:], stdout, root, cfg, registry)
 	case "telemetry":
@@ -138,7 +147,9 @@ func usage(w io.Writer) error {
 	_, err := fmt.Fprintln(w, `usage:
   hookline hook codex [--source user|project|auto]
   hookline recipe list [--json]
-  hookline init --recipe <id>... [--scope project|user|both] [--command <cmd>] [--force] [--json]
+  hookline recipe enable|disable <id>... [--scope project|user|both] [--force] [--prune-managed] [--json]
+  hookline init [--recipe <id>...] [--scope project|user|both] [--command <cmd>] [--force] [--json]
+  hookline import codex-hooks [--from <path>] [--id <id>] [--enable] [--install] [--force] [--json]
   hookline doctor [--json] [--recipe <id>]
   hookline scan lines [--json]
   hookline scan secrets [--json]

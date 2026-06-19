@@ -1,0 +1,64 @@
+---
+title: "HL-RECIPE-001: RTK Explicit Proxy"
+description: Demonstrates RTK as an optional project-local Hookline recipe without global agent hook installation.
+date: 2026-06-11
+status: verified
+suite: smoke
+command: go run ./cmd/hookline bench --suite smoke --json
+project: temporary RTK recipe demo repo
+tags:
+  - recipe
+  - rtk
+  - explicit-proxy
+---
+
+# HL-RECIPE-001: RTK Explicit Proxy
+
+**Project fixture:** temporary repo with a managed `.rtk/filters.toml` and a
+fake `rtk` binary on the fixture PATH.
+
+**Initial state**
+
+- `rtk-explicit-proxy` is available as a project-local recipe manifest but is
+  not part of the default Hookline recipe set.
+- The demo repo uses project-local `.rtk/filters.toml`.
+- The fake `rtk` binary is scoped to the demo PATH.
+
+**Replay messages**
+
+| Actor | Message |
+| --- | --- |
+| user | I want RTK as an optional recipe, not global mode. |
+| hookline | Use explicit RTK command wrappers; do not run `rtk init -g`. |
+| agent | I ran `rtk git status` and `rtk test cargo test` explicitly. |
+
+**Hook/check evidence**
+
+```json
+{
+  "event": "recipe demo",
+  "input": {
+    "recipe": "rtk-explicit-proxy",
+    "commands": ["rtk git status", "rtk test cargo test"]
+  },
+  "output": {
+    "git_status": "compact git status",
+    "test": "compact test output"
+  },
+  "effect": "project-local recipe demo; no global agent hook rewrite"
+}
+```
+
+**Final state**
+
+- Explicit RTK command wrappers return compact fixture output.
+- The fixture HOME contains no `.codex` or `.claude` directories.
+- `rtk-explicit-proxy` is removed from project config.
+- Managed `.rtk/filters.toml` can be pruned when the recipe is disabled.
+
+**Why no global mode**
+
+RTK documents global setup such as `rtk init -g --codex`, but this Hookline
+recipe intentionally does not run that command. The recipe demonstrates a safer
+project-local path: install/check `rtk`, keep optional filters in the repo, and
+use explicit commands such as `rtk git status` or `rtk test cargo test`.

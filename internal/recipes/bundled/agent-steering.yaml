@@ -1,6 +1,0 @@
-id: agent-steering
-title: Agent Steering
-description: Apply configurable local safety and workflow steering during agent hook events.
-surfaces:
-  - doctor
-  - hook

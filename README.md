@@ -25,11 +25,15 @@ Hookline signal, agent correction, and final result. See
 
 ## Recipe Setup
 
-Hookline core is recipe-less by default. Built-in recipes are available, but
-they do not affect hook behavior until enabled in config or applied with
-`hookline init --recipe ...`.
+Hookline core owns routing, telemetry, output merging, and the deterministic
+rule implementations. Recipe manifests are config files, not embedded runtime
+data; this repo keeps its local recipe pack in `.harness/recipes/`.
+Recipes do not affect hook behavior until enabled in config or applied with
+`hookline init`.
+Recipes can declare project-local `managed_files`; Hookline only writes or
+prunes those files when the recipe is explicitly enabled or disabled.
 
-Built-in recipes:
+Project recipes:
 
 - `codex-hooks` writes Codex hook JSON.
 - `coherence` adds deterministic repo consistency checks.
@@ -37,17 +41,33 @@ Built-in recipes:
 - `line-count` enables configurable line-count scan and hook review.
 - `agent-steering` enables dangerous-shell, large-diff, sensitive-path, skill,
   and stop-continuation steering.
+- `rtk-explicit-proxy` adds project-local RTK filters for explicit command use;
+  it does not run `rtk init -g` or install global rewrite hooks.
 
 One-project setup:
 
 ```sh
-go run ./cmd/hookline init \
-  --recipe codex-hooks \
-  --recipe coherence \
-  --recipe secrets-gitleaks \
-  --recipe line-count \
-  --recipe agent-steering
+go run ./cmd/hookline init
 ```
+
+With no `--recipe`, init applies the standard local setup: `codex-hooks`,
+`coherence`, `secrets-gitleaks`, `line-count`, and `agent-steering`.
+Pass one or more `--recipe` flags for a narrower setup.
+
+Import existing Codex hook commands into a Hookline recipe:
+
+```sh
+go run ./cmd/hookline import codex-hooks \
+  --from ../ProjectXYZ/.codex/hooks.json \
+  --id projectxyz-hooks \
+  --enable
+go run ./cmd/hookline init --recipe codex-hooks --recipe projectxyz-hooks --force
+```
+
+For a one-step project replacement, use `--install --force`; Hookline writes
+the imported recipe, enables it with `codex-hooks`, and replaces
+`.codex/hooks.json` with Hookline wiring. The importer accepts `hooks.json`,
+`hooks.yaml`, `hooks.yml`, and GitHub `blob` URLs.
 
 Global Codex hook setup:
 
@@ -61,6 +81,15 @@ go install ./cmd/hookline
 ```sh
 go run ./cmd/hookline doctor --json
 go run ./cmd/hookline doctor --recipe coherence --json
+```
+
+Optional recipes can be enabled or removed directly:
+
+```sh
+hookline recipe enable rtk-explicit-proxy
+rtk git status
+rtk test cargo test
+hookline recipe disable rtk-explicit-proxy --prune-managed
 ```
 
 ## Codex Hooks
@@ -98,14 +127,17 @@ hooks:
 Config precedence is:
 
 ```text
-built-in defaults < ~/.fireharp/hookline.yaml < .fireharp/harness.yaml
+built-in defaults < ~/.harness/hookline.yaml < harness.yaml
 ```
 
 The project config defines the 500 LoC soft limit, dangerous shell patterns,
 sensitive path globs, secret scanning settings, and skill-trigger nudges.
-Telemetry is local-only by default and is written to `.hookline/events.jsonl`.
+Telemetry is local-only by default and is written to `.harness/events.jsonl`.
 Files over `limits.split_review_line_limit` trigger stronger steering when
 touched by a hook event.
+
+Legacy `.harness/harness.yaml` is read only as a migration fallback; root
+`harness.yaml` wins when both exist.
 
 Large-file steering can be snoozed or recorded for later runs:
 
@@ -119,6 +151,8 @@ Recipes are enabled explicitly:
 
 ```yaml
 recipes:
+  paths:
+    - .harness/recipes
   enabled:
     - codex-hooks
     - coherence
@@ -127,13 +161,14 @@ recipes:
     - agent-steering
 ```
 
-Optional command-plugin manifests can be placed under
-`~/.fireharp/hookline/recipes/` or `.fireharp/hookline/recipes/`, or referenced
-with `recipes.paths`.
+Recipe manifests are loaded from `~/.harness/recipes/`,
+`.harness/recipes/`, and any extra `recipes.paths` entries. A
+manifest declares `id`, `title`, `description`, `surfaces`, optional
+`commands`, optional `codex_hooks`, and optional `managed_files`.
 
-`.hookline/` is runtime-only and gitignored as a whole. Config intentionally
-lives outside that directory; see
-[`docs/adr/0001-keep-config-outside-hookline-runtime.md`](docs/adr/0001-keep-config-outside-hookline-runtime.md).
+`harness.yaml` is the tracked project config. `.harness/` is runtime/local
+data and gitignored as a whole; see
+[`docs/adr/0001-root-harness-config-and-ignored-harness-runtime.md`](docs/adr/0001-root-harness-config-and-ignored-harness-runtime.md).
 
 ## Secret Scanning
 

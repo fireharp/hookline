@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 
 	"github.com/fireharp/hookline/internal/config"
 	"github.com/fireharp/hookline/internal/engine"
@@ -124,6 +125,119 @@ func additionalContext(eventName, message string) *hookOutput {
 		"hookEventName":     eventName,
 		"additionalContext": message,
 	}}
+}
+
+func MergeOutputs(eventName string, outputs ...[]byte) ([]byte, error) {
+	var merged hookOutput
+	var contexts []string
+	var denyReasons []string
+	var blockReasons []string
+	for _, output := range outputs {
+		text := strings.TrimSpace(string(output))
+		if text == "" {
+			continue
+		}
+		var parsed hookOutput
+		if err := json.Unmarshal([]byte(text), &parsed); err == nil && parsed.hasHookFields() {
+			mergeParsedOutput(eventName, &merged, parsed, &contexts, &denyReasons, &blockReasons)
+			continue
+		}
+		contexts = append(contexts, text)
+	}
+	if len(denyReasons) > 0 {
+		reason := strings.Join(append(denyReasons, contexts...), "\n")
+		merged.HookSpecificOutput = map[string]any{
+			"hookEventName":            eventName,
+			"permissionDecision":       "deny",
+			"permissionDecisionReason": reason,
+		}
+		merged.Decision = ""
+		merged.Reason = ""
+	} else if len(blockReasons) > 0 {
+		merged.Decision = "block"
+		merged.Reason = strings.Join(append(blockReasons, contexts...), "\n")
+		merged.HookSpecificOutput = nil
+		merged.SystemMessage = ""
+	} else if len(contexts) > 0 {
+		appendContext(eventName, &merged, strings.Join(contexts, "\n"))
+	}
+	if !merged.hasHookFields() {
+		return nil, nil
+	}
+	data, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func mergeParsedOutput(eventName string, merged *hookOutput, parsed hookOutput, contexts, denyReasons, blockReasons *[]string) {
+	if parsed.Decision == "block" {
+		*blockReasons = appendIfNotEmpty(*blockReasons, parsed.Reason)
+	} else if parsed.Decision != "" {
+		merged.Decision = parsed.Decision
+	}
+	if parsed.SystemMessage != "" {
+		*contexts = append(*contexts, parsed.SystemMessage)
+	}
+	if parsed.HookSpecificOutput != nil {
+		if reason := stringAny(parsed.HookSpecificOutput["permissionDecisionReason"]); stringAny(parsed.HookSpecificOutput["permissionDecision"]) == "deny" && reason != "" {
+			*denyReasons = append(*denyReasons, reason)
+		} else if context := stringAny(parsed.HookSpecificOutput["additionalContext"]); context != "" {
+			*contexts = append(*contexts, context)
+		} else {
+			merged.HookSpecificOutput = parsed.HookSpecificOutput
+			if _, ok := merged.HookSpecificOutput["hookEventName"]; !ok {
+				merged.HookSpecificOutput["hookEventName"] = eventName
+			}
+		}
+	}
+	if parsed.Reason != "" && parsed.Decision != "block" {
+		*contexts = append(*contexts, parsed.Reason)
+	}
+}
+
+func appendContext(eventName string, merged *hookOutput, message string) {
+	if message == "" {
+		return
+	}
+	if merged.HookSpecificOutput != nil {
+		if existing := stringAny(merged.HookSpecificOutput["additionalContext"]); existing != "" {
+			merged.HookSpecificOutput["additionalContext"] = existing + "\n" + message
+			return
+		}
+	}
+	if merged.SystemMessage != "" {
+		merged.SystemMessage += "\n" + message
+		return
+	}
+	switch eventName {
+	case "PreToolUse", "PermissionRequest", "PostToolUse", "UserPromptSubmit":
+		merged.HookSpecificOutput = map[string]any{
+			"hookEventName":     eventName,
+			"additionalContext": message,
+		}
+	default:
+		merged.SystemMessage = message
+	}
+}
+
+func (o hookOutput) hasHookFields() bool {
+	return o.Decision != "" || o.Reason != "" || o.SystemMessage != "" || len(o.HookSpecificOutput) > 0
+}
+
+func appendIfNotEmpty(values []string, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return values
+	}
+	return append(values, value)
+}
+
+func stringAny(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
 }
 
 func strictest(decisions []types.Decision) types.Decision {

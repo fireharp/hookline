@@ -51,6 +51,8 @@ type codexHookHandler struct {
 	StatusMessage string `json:"statusMessage,omitempty"`
 }
 
+var coherenceInitializer = runCoherenceInit
+
 func initRecipes(args []string, stdout io.Writer, root string, cfg config.Config, registry recipes.Registry) error {
 	opts, err := parseInitOptions(args)
 	if err != nil {
@@ -104,13 +106,17 @@ func initRecipes(args []string, stdout io.Writer, root string, cfg config.Config
 			}
 			results = append(results, initResult{Scope: "project", Action: "set-core-hooks-path", Changed: true, Message: ".githooks"})
 		}
-		if containsRecipe(opts.Recipes, recipes.SecretsGitleaks) {
-			path := filepath.Join(root, ".gitleaks.toml")
-			changed, err := writeManagedFile(path, []byte(defaultGitleaksConfig()), 0o644, opts.Force)
+		managed, err := applyManagedRecipeFiles(root, selected, opts.Force)
+		if err != nil {
+			return err
+		}
+		results = append(results, managed...)
+		if containsRecipe(opts.Recipes, recipes.Coherence) {
+			result, err := coherenceInitializer(root)
 			if err != nil {
 				return err
 			}
-			results = append(results, initResult{RecipeID: recipes.SecretsGitleaks, Scope: "project", Path: path, Action: "write-gitleaks-config", Changed: changed})
+			results = append(results, result)
 		}
 	}
 	if opts.JSON {
@@ -163,10 +169,10 @@ func parseInitOptions(args []string) (initOptions, error) {
 		}
 	}
 	if opts.Scope != "project" && opts.Scope != "user" && opts.Scope != "both" {
-		return initOptions{}, errors.New("usage: hookline init --recipe <id>... [--scope project|user|both] [--command <cmd>] [--force] [--json]")
+		return initOptions{}, errors.New("usage: hookline init [--recipe <id>...] [--scope project|user|both] [--command <cmd>] [--force] [--json]")
 	}
 	if len(opts.Recipes) == 0 {
-		return initOptions{}, errors.New("init requires at least one --recipe")
+		opts.Recipes = recipes.StandardRecipeIDs()
 	}
 	opts.Recipes = uniqueStrings(opts.Recipes)
 	if strings.TrimSpace(opts.Command) == "" {
@@ -184,13 +190,13 @@ func initScopes(scope string) []string {
 
 func configPath(scope, root string) (string, error) {
 	if scope == "project" {
-		return filepath.Join(root, ".fireharp", "harness.yaml"), nil
+		return config.ProjectConfigPath(root), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".fireharp", "hookline.yaml"), nil
+	return config.UserConfigPath(home), nil
 }
 
 func ensureRecipesEnabled(path string, ids []string) (bool, error) {
@@ -333,9 +339,17 @@ func buildCodexHooks(command string) codexHooksFile {
 		}}
 	}
 	return codexHooksFile{Hooks: map[string][]codexHookMatcher{
+		"SessionStart": {{
+			Matcher: "startup|resume|clear|compact",
+			Hooks:   handler("Hookline session start"),
+		}},
 		"PreToolUse": {{
 			Matcher: "Bash|apply_patch|Edit|Write",
 			Hooks:   handler("Hookline policy check"),
+		}},
+		"PermissionRequest": {{
+			Matcher: "Bash|apply_patch|Edit|Write",
+			Hooks:   handler("Hookline permission review"),
 		}},
 		"PostToolUse": {{
 			Matcher: "Bash|apply_patch|Edit|Write",
@@ -343,6 +357,20 @@ func buildCodexHooks(command string) codexHooksFile {
 		}},
 		"UserPromptSubmit": {{
 			Hooks: handler("Hookline prompt review"),
+		}},
+		"PreCompact": {{
+			Matcher: "manual|auto",
+			Hooks:   handler("Hookline pre-compact review"),
+		}},
+		"PostCompact": {{
+			Matcher: "manual|auto",
+			Hooks:   handler("Hookline post-compact review"),
+		}},
+		"SubagentStart": {{
+			Hooks: handler("Hookline subagent start"),
+		}},
+		"SubagentStop": {{
+			Hooks: handler("Hookline subagent stop"),
 		}},
 		"Stop": {{
 			Hooks: handler("Hookline stop review"),
@@ -438,6 +466,42 @@ func setGitConfig(root, key, value string) error {
 	cmd := exec.Command("git", "config", key, value)
 	cmd.Dir = root
 	return cmd.Run()
+}
+
+func runCoherenceInit(root string) (initResult, error) {
+	result := initResult{
+		RecipeID: recipes.Coherence,
+		Scope:    "project",
+		Action:   "run-coherence-init",
+		Message:  "coherence init --skill-install=auto",
+	}
+	path, ok := findExecutable("coherence")
+	if !ok {
+		result.Message = "coherence binary not found; run coherence init --skill-install=auto"
+		return result, nil
+	}
+	cmd := exec.Command(path, "init", "--skill-install=auto")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return result, fmt.Errorf("coherence init failed: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	output := string(out)
+	result.Changed = strings.Contains(output, "created") || strings.Contains(output, "updated")
+	return result, nil
+}
+
+func findExecutable(name string) (string, bool) {
+	if path, err := exec.LookPath(name); err == nil {
+		return path, true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, "go", "bin", name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 func splitCSV(value string) []string {

@@ -53,5 +53,5 @@ func (s Store) LatestDecision(ruleID, path string) (*Decision, error) {
 }
 
 func (s Store) decisionPath() string {
-	return filepath.Join(s.Root, ".hookline", "decisions.jsonl")
+	return filepath.Join(s.Root, ".harness", "decisions.jsonl")
 }
